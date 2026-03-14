@@ -41,6 +41,56 @@
         };
       };
 
+      # Integration test: boots the full nostrix stack and verifies
+      # nginx serves content, SSH is hardened, and the hostname is correct.
+      # Run with: nix build .#checks.x86_64-linux.integration
+      integrationTest = nixpkgs.legacyPackages.x86_64-linux.testers.nixosTest {
+        name = "nostrix-full-stack";
+
+        nodes.machine = { lib, ... }: {
+          imports = [
+            domus.nixosModules.default
+            ./modules/base.nix
+            ./modules/mdns.nix
+          ];
+
+          services.nostradomus = {
+            enable = true;
+            webserver.nginx = {
+              enable  = true;
+              port    = 8080;
+              content = "Hello from Nostrix!";
+            };
+          };
+
+          networking.hostName = "nostradomus-test";
+
+          # Auto-upgrade needs a real flake at /etc/nixos — disable in tests.
+          system.autoUpgrade.enable = lib.mkForce false;
+
+          system.stateVersion = "24.05";
+        };
+
+        testScript = ''
+          machine.start()
+          machine.wait_for_unit("multi-user.target")
+          machine.wait_for_unit("nostradomus.service")
+          machine.wait_for_unit("nginx.service")
+          machine.wait_for_open_port(8080)
+
+          # nginx serves the configured content
+          response = machine.succeed("curl -sf http://localhost:8080")
+          assert "Hello from Nostrix!" in response, f"Unexpected response: {response}"
+
+          # SSH password authentication is disabled
+          machine.succeed("sshd -T | grep -i 'passwordauthentication no'")
+
+          # hostname is correct
+          hostname = machine.succeed("hostname").strip()
+          assert hostname == "nostradomus-test", f"Unexpected hostname: {hostname}"
+        '';
+      };
+
       # Per-system outputs: the setup wizard package and app.
       perSystemOutputs = flake-utils.lib.eachDefaultSystem (system:
         let
@@ -64,5 +114,7 @@
           };
         });
     in
-    nixosOutputs // perSystemOutputs;
+    nixosOutputs // perSystemOutputs // {
+      checks.x86_64-linux.integration = integrationTest;
+    };
 }
