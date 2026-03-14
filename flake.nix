@@ -74,6 +74,11 @@
         testScript = ''
           machine.start()
           machine.wait_for_unit("multi-user.target")
+
+          # Print service status early so failures are visible instead of hanging.
+          machine.succeed("systemctl status nostradomus.service --no-pager || true")
+          machine.succeed("journalctl -u nostradomus.service --no-pager -n 30 || true")
+
           machine.wait_for_unit("nostradomus.service")
           machine.wait_for_unit("nginx.service")
           machine.wait_for_open_port(8080)
