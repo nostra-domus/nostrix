@@ -49,7 +49,7 @@
             pname      = "nostrix-setup";
             version    = "0.1.0";
             src        = ./.;
-            subPackages = [ "cmd/setup" ];
+            subPackages = [ "cmd/nostrix-setup" ];
             # No external Go dependencies — stdlib only.
             vendorHash = null;
           };
