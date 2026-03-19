@@ -29,6 +29,34 @@
         # The setup wizard generates a flake.nix that calls this.
         lib = import ./lib.nix { inherit self nixpkgs domus; };
 
+        # SD card image for the Raspberry Pi Zero 2W.
+        #
+        # Build:  nix build .#images.raspberryPiZero2W
+        # Flash:  use Raspberry Pi Imager with "Custom image", or:
+        #         zstd -d result/sd-image/*.img.zst --stdout \
+        #           | sudo dd of=/dev/rdiskX bs=4m
+        #
+        # First boot: SSH in as root (password: nostradomus) via nostradomus.local
+        # then run `nostrix-setup` to apply your real configuration.
+        images.raspberryPiZero2W = self.lib.mkImage {
+          hostname = "nostradomus";
+          modules  = [
+            self.hardware.raspberryPiZero2W
+            ({ lib, ... }: {
+              # Temporary credentials for first boot only.
+              # nostrix-setup will replace these with your SSH key.
+              users.users.root.password = "nostradomus";
+              services.openssh.settings.PasswordAuthentication =
+                lib.mkForce true;
+
+              services.nostradomus.webserver.nginx = {
+                enable  = true;
+                content = "Hello from Nostradomus!";
+              };
+            })
+          ];
+        };
+
         # Example configuration — verifies the module evaluates cleanly.
         # nix eval .#nixosConfigurations.example.config.networking.hostName
         nixosConfigurations.example = self.lib.mkSystem {

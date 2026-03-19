@@ -16,6 +16,23 @@
   #     modules  = [ nostrix.hardware.raspberryPiZero2W
   #                  { services.nostradomus.webserver.nginx.enable = true; } ];
   #   }
+  # mkImage builds a compressed SD card image (.img.zst) for flashing to an
+  # SD card. Accepts the same arguments as mkSystem; system defaults to
+  # "aarch64-linux" (Raspberry Pi). The image is built by adding NixOS's
+  # sd-image-aarch64 module on top of the regular system configuration.
+  #
+  # Example:
+  #   nix build .#images.raspberryPiZero2W
+  #   # Flash with Raspberry Pi Imager or:
+  #   # zstd -d result/sd-image/*.img.zst --stdout | sudo dd of=/dev/rdiskX bs=4m
+  mkImage = args:
+    (self.lib.mkSystem (args // {
+      system  = args.system or "aarch64-linux";
+      modules = [
+        "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
+      ] ++ (args.modules or []);
+    })).config.system.build.sdImage;
+
   mkSystem =
     { hostname
     , sshKeys  ? []
