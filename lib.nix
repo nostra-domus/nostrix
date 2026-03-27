@@ -1,20 +1,21 @@
-# lib.nix — helper functions for building Nostradomus NixOS systems.
-{ self, nixpkgs, domus }:
+# lib.nix — helper functions for building Nostrix NixOS systems.
+{ self, nixpkgs }:
 {
-  # mkSystem builds a NixOS configuration with the full Nostradomus stack.
+  # mkSystem builds a NixOS configuration with the Nostrix base stack.
   #
   # Arguments:
   #   hostname  — the machine's hostname (also reachable as hostname.local via mDNS)
   #   sshKeys   — list of SSH public key strings for root login (optional)
   #   system    — Nix system string, default "aarch64-linux" for Raspberry Pi
-  #   modules   — additional NixOS modules (hardware profile, addon config, etc.)
+  #   modules   — additional NixOS modules (hardware profile, app config, etc.)
   #
   # Example:
   #   nostrix.lib.mkSystem {
   #     hostname = "myserver";
   #     sshKeys  = [ "ssh-ed25519 AAAA..." ];
   #     modules  = [ nostrix.hardware.raspberryPiZero2W
-  #                  { services.nostradomus.webserver.nginx.enable = true; } ];
+  #                  myapp.nixosModules.default
+  #                  { services.nginx.enable = true; } ];
   #   }
   # mkImage builds a compressed SD card image (.img.zst) for flashing to an
   # SD card. Accepts the same arguments as mkSystem; system defaults to
@@ -41,9 +42,6 @@
     }:
     nixpkgs.lib.nixosSystem {
       inherit system;
-      # domus is passed as a module argument so modules/default.nix can
-      # import domus.nixosModules.default without hardcoding a store path.
-      specialArgs = { inherit domus; };
       modules = [
         self.nixosModules.default
         {

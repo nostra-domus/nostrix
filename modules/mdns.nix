@@ -1,5 +1,5 @@
 # mDNS: broadcast hostname.local on the local network via Avahi.
-# Lets users reach the server as nostradomus.local without configuring DNS.
+# Lets users reach the server as hostname.local without configuring DNS.
 { ... }:
 {
   services.avahi = {

@@ -1,4 +1,4 @@
-# Base system configuration applied to every Nostradomus installation.
+# Base system configuration applied to every Nostrix installation.
 #
 # Covers: SSH hardening, firewall, automatic upgrades, Nix store GC.
 # Does not include hardware, mDNS, or addon config — those are separate.
@@ -23,7 +23,7 @@
   };
 
   # Automatic upgrades: rebuild from the local /etc/nixos flake weekly,
-  # updating all flake inputs (nostrix, domus, nixpkgs) in one step.
+  # updating all flake inputs (nostrix, nixpkgs, and any app inputs) in one step.
   # The server reboots automatically when needed (e.g. kernel update).
   system.autoUpgrade = {
     enable            = true;

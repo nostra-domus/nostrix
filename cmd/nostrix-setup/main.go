@@ -1,4 +1,4 @@
-// Command nostrix-setup is the interactive setup wizard for Nostradomus.
+// Command nostrix-setup is the interactive setup wizard for Nostrix.
 //
 // It prompts for hostname, SSH key, hardware profile and addon choices,
 // generates /etc/nixos/flake.nix, and applies the configuration via
@@ -24,13 +24,13 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "print the generated config without writing or applying")
 	flag.Parse()
 
-	fmt.Println("Nostradomus Setup Wizard")
+	fmt.Println("Nostrix Setup Wizard")
 	fmt.Println("========================")
 	fmt.Println()
 
 	r := bufio.NewReader(os.Stdin)
 
-	hostname := prompt(r, "Hostname", "nostradomus")
+	hostname := prompt(r, "Hostname", "nostrix")
 
 	fmt.Println()
 	fmt.Println("SSH public key — paste your key, or press Enter to skip.")
@@ -41,14 +41,15 @@ func main() {
 
 	fmt.Println()
 	fmt.Println("Hardware profile:")
-	fmt.Println("  1  Raspberry Pi Zero 2W")
-	fmt.Println("  2  Generic x86_64  (PC / VM / VPS)")
-	fmt.Println("  3  None — I will add my own hardware module")
+	fmt.Println("  1  Raspberry Pi 3  (A+, B, B+)")
+	fmt.Println("  2  Raspberry Pi Zero 2W")
+	fmt.Println("  3  Generic x86_64  (PC / VM / VPS)")
+	fmt.Println("  4  None — I will add my own hardware module")
 	hw := prompt(r, "Choice", "1")
 
 	fmt.Println()
 	fmt.Println("Addons:")
-	nginxEnable := promptBool(r, "  nginx webserver (static HTML page)", true)
+	nginxEnable := promptBool(r, "  nginx webserver (port 80)", true)
 
 	cfg := config{
 		hostname:    hostname,
@@ -92,8 +93,10 @@ type config struct {
 func hwToNix(choice string) string {
 	switch choice {
 	case "1":
-		return "nostrix.hardware.raspberryPiZero2W"
+		return "nostrix.hardware.raspberryPi3"
 	case "2":
+		return "nostrix.hardware.raspberryPiZero2W"
+	case "3":
 		return "nostrix.hardware.genericX86_64"
 	default:
 		return ""
@@ -127,7 +130,8 @@ func generate(cfg config) string {
 	// Addon config block — only emitted when at least one addon is enabled.
 	if cfg.nginxEnable {
 		w("        {\n")
-		w("          services.nostradomus.webserver.nginx.enable = true;\n")
+		w("          services.nginx.enable = true;\n")
+		w("          networking.firewall.allowedTCPPorts = [ 80 ];\n")
 		w("        }\n")
 	}
 

@@ -1,17 +1,12 @@
 {
-  description = "Nostrix — opinionated NixOS base for Nostradomus";
+  description = "Nostrix — opinionated NixOS base for self-hosted servers";
 
   inputs = {
-    nixpkgs.url    = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url     = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-
-    domus = {
-      url = "github:nostra-domus/domus";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, domus }:
+  outputs = { self, nixpkgs, flake-utils }:
     let
       # NixOS-only outputs — not per-system.
       nixosOutputs = {
@@ -21,13 +16,14 @@
 
         # Hardware profiles — pass one in mkSystem's modules list.
         hardware = {
+          raspberryPi3      = ./modules/hardware/raspberry-pi-3.nix;
           raspberryPiZero2W = ./modules/hardware/raspberry-pi-zero-2w.nix;
           genericX86_64     = ./modules/hardware/generic-x86_64.nix;
         };
 
         # lib.mkSystem is the primary user-facing API.
         # The setup wizard generates a flake.nix that calls this.
-        lib = import ./lib.nix { inherit self nixpkgs domus; };
+        lib = import ./lib.nix { inherit self nixpkgs; };
 
         # SD card image for the Raspberry Pi Zero 2W.
         #
@@ -36,23 +32,42 @@
         #         zstd -d result/sd-image/*.img.zst --stdout \
         #           | sudo dd of=/dev/rdiskX bs=4m
         #
-        # First boot: SSH in as root (password: nostradomus) via nostradomus.local
+        # First boot: SSH in as root (password: nostrix) via nostrix.local
         # then run `nostrix-setup` to apply your real configuration.
+        images.raspberryPi3 = self.lib.mkImage {
+          hostname = "nostrix";
+          modules  = [
+            self.hardware.raspberryPi3
+            ({ lib, ... }: {
+              # Temporary credentials for first boot only.
+              # nostrix-setup will replace these with your SSH key.
+              users.users.root.password = "nostrix";
+              services.openssh.settings.PasswordAuthentication =
+                lib.mkForce true;
+
+              services.nginx.enable = true;
+              networking.firewall.allowedTCPPorts = [ 80 ];
+
+              system.stateVersion = "25.11";
+            })
+          ];
+        };
+
         images.raspberryPiZero2W = self.lib.mkImage {
-          hostname = "nostradomus";
+          hostname = "nostrix";
           modules  = [
             self.hardware.raspberryPiZero2W
             ({ lib, ... }: {
               # Temporary credentials for first boot only.
               # nostrix-setup will replace these with your SSH key.
-              users.users.root.password = "nostradomus";
+              users.users.root.password = "nostrix";
               services.openssh.settings.PasswordAuthentication =
                 lib.mkForce true;
 
-              services.nostradomus.webserver.nginx = {
-                enable  = true;
-                content = "Hello from Nostradomus!";
-              };
+              services.nginx.enable = true;
+              networking.firewall.allowedTCPPorts = [ 80 ];
+
+              system.stateVersion = "25.11";
             })
           ];
         };
@@ -60,38 +75,38 @@
         # Example configuration — verifies the module evaluates cleanly.
         # nix eval .#nixosConfigurations.example.config.networking.hostName
         nixosConfigurations.example = self.lib.mkSystem {
-          hostname = "nostradomus";
+          hostname = "nostrix";
           system   = "x86_64-linux";
           modules  = [
             self.hardware.genericX86_64
-            { services.nostradomus.webserver.nginx.enable = true; }
+            { services.nginx.enable = true;
+              networking.firewall.allowedTCPPorts = [ 80 ]; }
           ];
         };
       };
 
-      # Integration test: boots the full nostrix stack and verifies
+      # Integration test: boots the base nostrix stack and verifies
       # nginx serves content, SSH is hardened, and the hostname is correct.
       # Run with: nix build .#checks.x86_64-linux.integration
       integrationTest = nixpkgs.legacyPackages.x86_64-linux.testers.nixosTest {
-        name = "nostrix-full-stack";
+        name = "nostrix-base";
 
-        nodes.machine = { lib, ... }: {
+        nodes.machine = { lib, pkgs, ... }: {
           imports = [
-            domus.nixosModules.default
             ./modules/base.nix
             ./modules/mdns.nix
           ];
 
-          services.nostradomus = {
+          services.nginx = {
             enable = true;
-            webserver.nginx = {
-              enable  = true;
-              port    = 8080;
-              content = "Hello from Nostrix!";
+            virtualHosts.default = {
+              root = pkgs.writeTextDir "index.html" "Hello from Nostrix!";
+              listen = [{ addr = "0.0.0.0"; port = 8080; }];
             };
           };
+          networking.firewall.allowedTCPPorts = [ 8080 ];
 
-          networking.hostName = "nostradomus-test";
+          networking.hostName = "nostrix-test";
 
           # Auto-upgrade needs a real flake at /etc/nixos — disable in tests.
           system.autoUpgrade.enable = lib.mkForce false;
@@ -103,11 +118,6 @@
           machine.start()
           machine.wait_for_unit("multi-user.target")
 
-          # Print service status early so failures are visible instead of hanging.
-          machine.succeed("systemctl status nostradomus.service --no-pager || true")
-          machine.succeed("journalctl -u nostradomus.service --no-pager -n 30 || true")
-
-          machine.wait_for_unit("nostradomus.service")
           machine.wait_for_unit("nginx.service")
           machine.wait_for_open_port(8080)
 
@@ -120,7 +130,7 @@
 
           # hostname is correct
           hostname = machine.succeed("hostname").strip()
-          assert hostname == "nostradomus-test", f"Unexpected hostname: {hostname}"
+          assert hostname == "nostrix-test", f"Unexpected hostname: {hostname}"
         '';
       };
 
@@ -140,7 +150,7 @@
           # nix build → ./result/bin/nostrix-setup
           packages.default = setup;
 
-          # nix run github:nostra-domus/nostrix
+          # nix run github:nostra-domus/nostrix -- (runs nostrix-setup)
           apps.default = flake-utils.lib.mkApp {
             drv  = setup;
             name = "nostrix-setup";

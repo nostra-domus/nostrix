@@ -1,9 +1,9 @@
 # Top-level Nostrix NixOS module.
-# Composes the domus application module with the opinionated base config.
-{ domus, ... }:
+# Composes the opinionated base config with mDNS.
+# Application modules are added by the caller via mkSystem's modules argument.
+{ ... }:
 {
   imports = [
-    domus.nixosModules.default
     ./base.nix
     ./mdns.nix
   ];
