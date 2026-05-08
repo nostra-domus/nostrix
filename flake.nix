@@ -17,6 +17,7 @@
         # Hardware profiles — pass one in mkSystem's modules list.
         hardware = {
           raspberryPi3      = ./modules/hardware/raspberry-pi-3.nix;
+          raspberryPi4      = ./modules/hardware/raspberry-pi-4.nix;
           raspberryPiZero2W = ./modules/hardware/raspberry-pi-zero-2w.nix;
           genericX86_64     = ./modules/hardware/generic-x86_64.nix;
         };
