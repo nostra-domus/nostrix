@@ -36,6 +36,10 @@ func generate(s state) string {
 		f("        %s\n", hw)
 	}
 
+	// Pinned once at generation time and never touched again — stateVersion
+	// must not silently track nixpkgs as it advances via auto-upgrade.
+	w("        { system.stateVersion = \"25.11\"; }\n")
+
 	for _, a := range s.Apps {
 		f("        inputs.%s.nixosModules.default\n", a.Name)
 	}
