@@ -45,6 +45,12 @@
               users.users.root.password = "nostrix";
               services.openssh.settings.PasswordAuthentication =
                 lib.mkForce true;
+              # base.nix sets PermitRootLogin = "prohibit-password", which
+              # blocks root password auth even when PasswordAuthentication
+              # is true above — override it too so the temporary password
+              # actually works for first-boot SSH access.
+              services.openssh.settings.PermitRootLogin =
+                lib.mkForce "yes";
 
               services.nginx.enable = true;
               networking.firewall.allowedTCPPorts = [ 80 ];
@@ -64,6 +70,8 @@
               users.users.root.password = "nostrix";
               services.openssh.settings.PasswordAuthentication =
                 lib.mkForce true;
+              services.openssh.settings.PermitRootLogin =
+                lib.mkForce "yes";
 
               services.nginx.enable = true;
               networking.firewall.allowedTCPPorts = [ 80 ];
