@@ -1,0 +1,39 @@
+{{define "setup"}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nostrix — Setup</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  nav a { margin-right: 1rem; }
+  label { display: block; margin-top: 1rem; font-weight: 600; }
+  input[type=text], select, textarea { width: 100%; padding: 0.4rem; margin-top: 0.25rem; box-sizing: border-box; font: inherit; }
+  button { margin-top: 1.5rem; padding: 0.5rem 1rem; }
+</style>
+</head>
+<body>
+<nav><a href="/">Status</a> <a href="/setup">Setup</a> <a href="/apps">Apps</a></nav>
+<h1>Setup</h1>
+<form method="post" action="/setup">
+  <label>Hostname
+    <input type="text" name="hostname" value="{{.State.Hostname}}" required>
+  </label>
+  <label>SSH public key
+    <textarea name="sshKey" rows="3" placeholder="ssh-ed25519 AAAA...">{{.State.SSHKey}}</textarea>
+  </label>
+  <label>Hardware profile
+    <select name="hardware">
+      <option value=""                  {{if eq .State.Hardware ""}}selected{{end}}>None</option>
+      <option value="raspberryPi3"      {{if eq .State.Hardware "raspberryPi3"}}selected{{end}}>Raspberry Pi 3</option>
+      <option value="raspberryPi4"      {{if eq .State.Hardware "raspberryPi4"}}selected{{end}}>Raspberry Pi 4</option>
+      <option value="raspberryPiZero2W" {{if eq .State.Hardware "raspberryPiZero2W"}}selected{{end}}>Raspberry Pi Zero 2W</option>
+      <option value="genericX86_64"     {{if eq .State.Hardware "genericX86_64"}}selected{{end}}>Generic x86_64</option>
+    </select>
+  </label>
+  <label><input type="checkbox" name="nginx" {{if .State.NginxEnable}}checked{{end}}> nginx webserver (port 80)</label>
+  <button type="submit">Save &amp; apply</button>
+</form>
+</body>
+</html>
+{{end}}

@@ -8,6 +8,7 @@
 //
 //	nostrix-setup                — interactive setup wizard
 //	nostrix-setup add <git-url>  — register an app
+//	nostrix-setup serve          — run the web configuration UI
 package main
 
 import (
@@ -25,6 +26,9 @@ func main() {
 		case "add":
 			runAdd(os.Args[2:])
 			return
+		case "serve":
+			runServe(os.Args[2:])
+			return
 		case "help", "--help", "-h":
 			printUsage()
 			return
@@ -37,11 +41,13 @@ func printUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  nostrix-setup              — interactive setup wizard")
 	fmt.Println("  nostrix-setup add <url>    — register an app")
+	fmt.Println("  nostrix-setup serve        — run the web configuration UI")
 	fmt.Println()
-	fmt.Println("Flags (all subcommands):")
+	fmt.Println("Flags:")
 	fmt.Println("  --output   path to flake.nix  (default: /etc/nixos/flake.nix)")
 	fmt.Println("  --state    path to state file  (default: /etc/nostrix/state.json)")
-	fmt.Println("  --dry-run  print without writing or applying")
+	fmt.Println("  --dry-run  print without writing or applying (wizard, add)")
+	fmt.Println("  --addr     address to listen on  (serve; default: 0.0.0.0:8080)")
 }
 
 // apply writes content to path and runs nixos-rebuild switch.

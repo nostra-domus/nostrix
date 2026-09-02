@@ -146,15 +146,8 @@
       # Per-system outputs: the setup wizard package and app.
       perSystemOutputs = flake-utils.lib.eachDefaultSystem (system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
-          setup = pkgs.buildGoModule {
-            pname      = "nostrix-setup";
-            version    = "0.1.0";
-            src        = ./.;
-            subPackages = [ "cmd/nostrix-setup" ];
-            # No external Go dependencies — stdlib only.
-            vendorHash = null;
-          };
+          pkgs  = nixpkgs.legacyPackages.${system};
+          setup = self.lib.mkSetupPackage { inherit pkgs; };
         in {
           # nix build → ./result/bin/nostrix-setup
           packages.default = setup;

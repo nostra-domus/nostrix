@@ -1,0 +1,43 @@
+{{define "apps"}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nostrix — Apps</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  nav a { margin-right: 1rem; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  td, th { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #ddd; }
+  form.add { margin-top: 1.5rem; display: flex; gap: 0.5rem; }
+  form.add input { flex: 1; padding: 0.4rem; font: inherit; }
+</style>
+</head>
+<body>
+<nav><a href="/">Status</a> <a href="/setup">Setup</a> <a href="/apps">Apps</a></nav>
+<h1>Apps</h1>
+<table>
+<tr><th>Name</th><th>URL</th><th></th></tr>
+{{range .State.Apps}}
+<tr>
+  <td>{{.Name}}</td>
+  <td>{{.URL}}</td>
+  <td>
+    <form method="post" action="/apps/remove" style="margin:0">
+      <input type="hidden" name="name" value="{{.Name}}">
+      <button type="submit">Remove</button>
+    </form>
+  </td>
+</tr>
+{{else}}
+<tr><td colspan="3">No apps registered.</td></tr>
+{{end}}
+</table>
+
+<form class="add" method="post" action="/apps">
+  <input type="text" name="url" placeholder="github:org/repo" required>
+  <button type="submit">Add</button>
+</form>
+</body>
+</html>
+{{end}}

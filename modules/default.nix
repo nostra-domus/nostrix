@@ -6,5 +6,6 @@
   imports = [
     ./base.nix
     ./mdns.nix
+    ./web.nix
   ];
 }

@@ -22,12 +22,6 @@ func runAdd(args []string) {
 	}
 	rawURL := fs.Arg(0)
 
-	name, err := appNameFromURL(rawURL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: invalid URL %q: %v\n", rawURL, err)
-		os.Exit(1)
-	}
-
 	s, err := loadState(*stateFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: could not load state from %s: %v\n", *stateFile, err)
@@ -35,14 +29,12 @@ func runAdd(args []string) {
 		os.Exit(1)
 	}
 
-	for _, a := range s.Apps {
-		if a.Name == name {
-			fmt.Fprintf(os.Stderr, "error: app %q is already registered\n", name)
-			os.Exit(1)
-		}
+	name, err := addApp(&s, rawURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 
-	s.Apps = append(s.Apps, app{Name: name, URL: rawURL})
 	flake := generate(s)
 
 	fmt.Printf("Adding app %q from %s\n\n", name, rawURL)
@@ -72,6 +64,34 @@ func runAdd(args []string) {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// addApp registers a new app in s, deriving its name from rawURL. Fails if
+// the URL can't be parsed or the derived name is already registered.
+// Returns the derived name on success.
+func addApp(s *state, rawURL string) (string, error) {
+	name, err := appNameFromURL(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL %q: %w", rawURL, err)
+	}
+	for _, a := range s.Apps {
+		if a.Name == name {
+			return "", fmt.Errorf("app %q is already registered", name)
+		}
+	}
+	s.Apps = append(s.Apps, app{Name: name, URL: rawURL})
+	return name, nil
+}
+
+// removeApp removes a registered app by name. Reports whether it existed.
+func removeApp(s *state, name string) bool {
+	for i, a := range s.Apps {
+		if a.Name == name {
+			s.Apps = append(s.Apps[:i], s.Apps[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // appNameFromURL derives an app name from a flake URL.

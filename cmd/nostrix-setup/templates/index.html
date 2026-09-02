@@ -1,0 +1,45 @@
+{{define "index"}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nostrix</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  nav a { margin-right: 1rem; }
+  dl { display: grid; grid-template-columns: 10rem 1fr; gap: 0.25rem 1rem; }
+  dt { font-weight: 600; }
+  .status-ok   { color: #1a7f37; }
+  .status-err  { color: #b31d28; }
+  .status-busy { color: #9a6700; }
+  form { margin-top: 1rem; }
+  button { padding: 0.4rem 0.8rem; }
+</style>
+</head>
+<body>
+<nav><a href="/">Status</a> <a href="/setup">Setup</a> <a href="/apps">Apps</a></nav>
+<h1>Nostrix</h1>
+
+{{if .Rebuilding}}
+  <p class="status-busy">Rebuild in progress&hellip;</p>
+{{else if .LastError}}
+  <p class="status-err">Last rebuild failed: {{.LastError}}</p>
+{{else}}
+  <p class="status-ok">System up to date.</p>
+{{end}}
+
+<h2>Configuration</h2>
+<dl>
+  <dt>Hostname</dt><dd>{{.State.Hostname}}</dd>
+  <dt>SSH key</dt><dd>{{if .State.SSHKey}}configured{{else}}none{{end}}</dd>
+  <dt>Hardware</dt><dd>{{if .State.Hardware}}{{.State.Hardware}}{{else}}none{{end}}</dd>
+  <dt>nginx</dt><dd>{{if .State.NginxEnable}}enabled{{else}}disabled{{end}}</dd>
+  <dt>Apps</dt><dd>{{len .State.Apps}} registered</dd>
+</dl>
+
+<form method="post" action="/rebuild">
+  <button type="submit" {{if .Rebuilding}}disabled{{end}}>Rebuild now</button>
+</form>
+</body>
+</html>
+{{end}}

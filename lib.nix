@@ -42,6 +42,9 @@
     }:
     nixpkgs.lib.nixosSystem {
       inherit system;
+      # Modules (e.g. web.nix) build the nostrix-setup package themselves
+      # via self.lib.mkSetupPackage, so they need self in scope.
+      specialArgs = { inherit self; };
       modules = [
         self.nixosModules.default
         {
@@ -50,4 +53,16 @@
         }
       ] ++ modules;
     };
+
+  # mkSetupPackage builds the nostrix-setup Go binary. Shared by the
+  # per-system `packages.default` output and modules/web.nix's systemd
+  # service, so both always reference the exact same derivation.
+  mkSetupPackage = { pkgs }: pkgs.buildGoModule {
+    pname       = "nostrix-setup";
+    version     = "0.1.0";
+    src         = self;
+    subPackages = [ "cmd/nostrix-setup" ];
+    # No external Go dependencies — stdlib only.
+    vendorHash  = null;
+  };
 }
