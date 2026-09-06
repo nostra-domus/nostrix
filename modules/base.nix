@@ -42,4 +42,11 @@
     options   = "--delete-older-than 30d";
   };
   nix.settings.auto-optimise-store = true;
+
+  # Nostrix is flake-only by design (mkSystem, mkImage, nostrix-setup's
+  # generated flake.nix all assume it). nixos-rebuild already passes
+  # --extra-experimental-features itself on every invocation, but that
+  # doesn't cover a bare `nix ...` call (e.g. `nix flake update`) — enable
+  # both globally so the plain CLI works too, on every Nostrix system.
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
 }
