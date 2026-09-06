@@ -35,7 +35,11 @@ func runAdd(args []string) {
 		os.Exit(1)
 	}
 
-	flake := generate(s)
+	flake, err := generate(s)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Printf("Adding app %q from %s\n\n", name, rawURL)
 	fmt.Println(strings.Repeat("─", 60))
@@ -73,6 +77,9 @@ func addApp(s *state, rawURL string) (string, error) {
 	name, err := appNameFromURL(rawURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid URL %q: %w", rawURL, err)
+	}
+	if !validIdentifier(name) {
+		return "", fmt.Errorf("app name %q derived from %q is not safe to use: must start with a letter and contain only letters, digits, hyphens, and underscores", name, rawURL)
 	}
 	for _, a := range s.Apps {
 		if a.Name == name {
