@@ -48,6 +48,8 @@ func printUsage() {
 	fmt.Println("  --state    path to state file  (default: /etc/nostrix/state.json)")
 	fmt.Println("  --dry-run  print without writing or applying (wizard, add)")
 	fmt.Println("  --addr     address to listen on  (serve; default: 0.0.0.0:8080)")
+	fmt.Println("  --cf-team-domain  Cloudflare Access team domain  (serve; required)")
+	fmt.Println("  --cf-aud          Cloudflare Access application audience  (serve; required)")
 }
 
 // apply writes content to path and runs nixos-rebuild switch.
@@ -62,7 +64,20 @@ func apply(path, content string) error {
 
 	flakeDir := filepath.Dir(path)
 	fmt.Printf("Running: nixos-rebuild switch --flake %s\n\n", flakeDir)
-	cmd := exec.Command("nixos-rebuild", "switch", "--flake", flakeDir)
+
+	var cmd *exec.Cmd
+	if os.Getenv("INVOCATION_ID") != "" {
+		// Running as a systemd service (nostrix-web): this switch can
+		// change nostrix-web's own unit (e.g. the bootstrap -> configured
+		// transition in modules/web.nix), which makes systemd restart the
+		// very unit this process runs under partway through. Run
+		// nixos-rebuild in its own transient scope, outside nostrix-web's
+		// cgroup, so that restart doesn't tear down the switch in progress.
+		cmd = exec.Command("systemd-run", "--collect", "--wait", "--pipe",
+			"nixos-rebuild", "switch", "--flake", flakeDir)
+	} else {
+		cmd = exec.Command("nixos-rebuild", "switch", "--flake", flakeDir)
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

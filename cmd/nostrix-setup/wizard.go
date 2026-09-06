@@ -49,7 +49,19 @@ func runWizard() {
 		NginxEnable: nginxEnable,
 	}
 
-	flake := generate(s)
+	fmt.Println()
+	if promptBool(r, "Set up remote access via Cloudflare Tunnel?", false) {
+		if err := promptCloudflare(r, &s); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	flake, err := generate(s)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Println()
 	fmt.Println(strings.Repeat("─", 60))
@@ -74,6 +86,40 @@ func runWizard() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// promptCloudflare asks for the same inputs as the web UI's bootstrap form
+// (cmd/nostrix-setup/templates/bootstrap.html) and provisions the device's
+// Cloudflare Tunnel + Access app, filling in s's Cloudflare fields on
+// success. Kept as a CLI equivalent of that form — both call the same
+// provisionCloudflare — rather than a second implementation.
+func promptCloudflare(r *bufio.Reader, s *state) error {
+	s.OwnerEmail = prompt(r, "  Your email (for the Access allowlist)", "")
+
+	apiToken := prompt(r, "  Cloudflare API token", "")
+	client := newCloudflareClient(apiToken)
+
+	cfg := cloudflareConfig{
+		AccountID:  prompt(r, "  Cloudflare account ID", ""),
+		ZoneID:     prompt(r, "  Cloudflare zone ID", ""),
+		BaseDomain: prompt(r, "  Base domain (e.g. example.com)", ""),
+		TeamDomain: prompt(r, "  Cloudflare team domain", ""),
+		DeviceName: s.Hostname,
+		OwnerEmail: s.OwnerEmail,
+	}
+
+	fmt.Println()
+	fmt.Println("Provisioning Cloudflare Tunnel + Access app...")
+	result, err := provisionCloudflare(client, cfg)
+	if err != nil {
+		return fmt.Errorf("Cloudflare setup failed: %w", err)
+	}
+
+	s.CloudflareTeamDomain = result.TeamDomain
+	s.CloudflareAud = result.Aud
+	s.CloudflareTunnelToken = result.TunnelToken
+	fmt.Printf("Done — device will be reachable at https://%s\n", result.Hostname)
+	return nil
 }
 
 // hwChoice maps wizard input (1–5) to bare hardware names stored in state.

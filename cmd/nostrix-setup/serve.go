@@ -41,11 +41,39 @@ func runServe(args []string) {
 	addr := fs.String("addr", "0.0.0.0:8080", "address to listen on")
 	output := fs.String("output", "/etc/nixos/flake.nix", "path to write the generated flake.nix")
 	stateFile := fs.String("state", "/etc/nostrix/state.json", "path to the state file")
+	cfTeamDomain := fs.String("cf-team-domain", "", "Cloudflare Access team domain (empty: run in bootstrap mode)")
+	cfAud := fs.String("cf-aud", "", "Cloudflare Access application audience tag (empty: run in bootstrap mode)")
 	fs.Parse(args) //nolint:errcheck
 
 	srv := &server{output: *output, stateFile: *stateFile}
-
 	mux := http.NewServeMux()
+
+	// Bootstrap mode: Cloudflare hasn't been configured yet (the state a
+	// freshly flashed image boots into). Serve only the bootstrap setup
+	// form, unauthenticated by Access (there's no Access to check yet) but
+	// behind a fixed shared credential — see requireBasicAuth. Once the
+	// form's submission succeeds, the generated flake sets real
+	// team-domain/AUD values and nixos-rebuild switch restarts this same
+	// service in the branch below.
+	if *cfTeamDomain == "" && *cfAud == "" {
+		mux.HandleFunc("/", srv.handleBootstrap)
+		fmt.Printf("Nostrix web UI listening on http://%s (bootstrap mode — not yet configured)\n", *addr)
+		if err := http.ListenAndServe(*addr, requireBasicAuth(bootstrapUser, bootstrapPassword, mux)); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Fail closed: a partially-set pair means genuine misconfiguration
+	// (not "not yet bootstrapped") — refuse to serve rather than run
+	// unauthenticated.
+	if *cfTeamDomain == "" || *cfAud == "" {
+		fmt.Fprintln(os.Stderr, "error: --cf-team-domain and --cf-aud must both be set, or both left empty for bootstrap mode")
+		os.Exit(1)
+	}
+	verifier := newAccessVerifier(*cfTeamDomain, *cfAud)
+
 	mux.HandleFunc("/", srv.handleIndex)
 	mux.HandleFunc("/setup", srv.handleSetup)
 	mux.HandleFunc("/apps", srv.handleApps)
@@ -53,10 +81,68 @@ func runServe(args []string) {
 	mux.HandleFunc("/rebuild", srv.handleRebuild)
 
 	fmt.Printf("Nostrix web UI listening on http://%s\n", *addr)
-	if err := http.ListenAndServe(*addr, mux); err != nil {
+	if err := http.ListenAndServe(*addr, requireAccess(verifier, mux)); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// handleBootstrap serves the first-boot setup form (LAN-reachable, behind
+// Basic Auth only) that collects everything needed to both finish
+// configuring this device and provision its Cloudflare Tunnel + Access app,
+// in one step, from a phone browser.
+func (srv *server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	s, _ := loadState(srv.stateFile)
+
+	if r.Method != http.MethodPost {
+		srv.render(w, "bootstrap", pageData{State: s})
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.Hostname = strings.TrimSpace(r.FormValue("hostname"))
+	s.SSHKey = strings.TrimSpace(r.FormValue("sshKey"))
+	s.Hardware = r.FormValue("hardware")
+	s.OwnerEmail = strings.TrimSpace(r.FormValue("ownerEmail"))
+
+	client := newCloudflareClient(strings.TrimSpace(r.FormValue("cfAPIToken")))
+	cfCfg := cloudflareConfig{
+		AccountID:  strings.TrimSpace(r.FormValue("cfAccountID")),
+		ZoneID:     strings.TrimSpace(r.FormValue("cfZoneID")),
+		TeamDomain: strings.TrimSpace(r.FormValue("cfTeamDomain")),
+		BaseDomain: strings.TrimSpace(r.FormValue("cfBaseDomain")),
+		DeviceName: s.Hostname,
+		OwnerEmail: s.OwnerEmail,
+	}
+
+	result, err := provisionCloudflare(client, cfCfg)
+	if err != nil {
+		srv.render(w, "bootstrap", pageData{State: s, LastError: "Cloudflare setup failed: " + err.Error()})
+		return
+	}
+	s.CloudflareTeamDomain = result.TeamDomain
+	s.CloudflareAud = result.Aud
+	s.CloudflareTunnelToken = result.TunnelToken
+
+	if err := srv.applyState(s); err != nil {
+		srv.render(w, "bootstrap", pageData{State: s, LastError: err.Error()})
+		return
+	}
+
+	// From here, nixos-rebuild switch (running in the background) will
+	// bring up the tunnel and restart this very service bound to
+	// localhost only, behind Access — this response may be the last one
+	// this bootstrap listener ever serves.
+	srv.render(w, "bootstrap", pageData{State: s, Rebuilding: true})
 }
 
 func (srv *server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -154,16 +240,27 @@ func (srv *server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s, _ := loadState(srv.stateFile)
-	srv.rebuildAsync(generate(s))
+	flake, err := generate(s)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	srv.rebuildAsync(flake)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// applyState saves s and triggers a rebuild in the background.
+// applyState validates and generates s's flake, saves s, and triggers a
+// rebuild in the background. Generating (and thus validating) before
+// saving keeps invalid state out of the state file.
 func (srv *server) applyState(s state) error {
+	flake, err := generate(s)
+	if err != nil {
+		return err
+	}
 	if err := saveState(srv.stateFile, s); err != nil {
 		return err
 	}
-	srv.rebuildAsync(generate(s))
+	srv.rebuildAsync(flake)
 	return nil
 }
 

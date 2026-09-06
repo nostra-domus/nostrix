@@ -2,6 +2,41 @@
 
 Lightweight local backlog for work that's been scoped but not yet implemented.
 
+## Cloudflare provisioning for the web UI's Access auth — done via LAN bootstrap mode
+
+**Status: implemented (2026-09-06).** Originally scoped as a pre-flash, Raspberry-Pi-
+Imager-style provisioning tool run on the installer's own computer before the SD card
+is ever in the Pi. That direction was dropped: it would have required Nix plus
+aarch64 cross-build tooling on the installer's machine, which doesn't work on Windows
+and is awkward on Mac — the opposite of the phone-only goal.
+
+What shipped instead: `modules/web.nix`'s `nostrix-web` service now has a **bootstrap
+mode**, active whenever `cloudflareTeamDomain`/`cloudflareAud` are unset (the state a
+freshly flashed image boots into). In that mode it binds to the LAN instead of
+localhost and serves a setup form (`cmd/nostrix-setup/templates/bootstrap.html`,
+behind a fixed shared credential — same trust level as the existing temporary
+first-boot SSH password) collecting hostname, SSH key, owner email, and Cloudflare
+account details. Submitting it calls the Cloudflare API directly
+(`cmd/nostrix-setup/cloudflare.go`) to create the tunnel, DNS route, Access app, and
+Access policy, then generates and applies a flake with the result baked in
+(`modules/cloudflared.nix`'s `tunnelToken` option). `nixos-rebuild switch` then
+restarts `nostrix-web` in its normal locked-down, Access-gated mode automatically.
+
+Net effect: the entire setup — including Cloudflare provisioning — can be done from a
+phone browser on the same network as the device, no SSH, no Nix, no laptop. The
+existing SSH-based CLI wizard (`wizard.go`) gained the identical Cloudflare prompts for
+parity, sharing the same `generate()`/`provisionCloudflare` code.
+
+**Remaining scope, not yet done:** the device's ultimate *recipient*, if different from
+whoever fills in the bootstrap form (e.g. an operator setting up a device for a
+non-technical family member), still can't do so with only an email address — the form
+needs a Cloudflare API token, which isn't something to hand to an end user. Making that
+work would mean the device calling an operator-run backend (holding the operator's
+Cloudflare credentials) instead of the Cloudflare API directly — a genuinely separate,
+bigger piece of infrastructure, deliberately out of scope for this pass.
+
+---
+
 ## Add WiFi configuration to the setup wizard
 
 **Context:** Nostrix has no WiFi support anywhere — no `networking.wireless` config in

@@ -12,7 +12,15 @@
       nixosOutputs = {
         # The NixOS module. Import this directly for fine-grained control.
         # Most users should use lib.mkSystem instead.
-        nixosModules.default = ./modules/default.nix;
+        nixosModules = {
+          default     = ./modules/default.nix;
+          # Opt-in add-ons — not part of `default`, but exposed so a
+          # generated flake.nix (an external consumer of this input, same
+          # as demo/flake.nix) can reference them by name instead of a
+          # bare path into this repo.
+          web         = ./modules/web.nix;
+          cloudflared = ./modules/cloudflared.nix;
+        };
 
         # Hardware profiles — pass one in mkSystem's modules list.
         hardware = {
@@ -33,12 +41,16 @@
         #         zstd -d result/sd-image/*.img.zst --stdout \
         #           | sudo dd of=/dev/rdiskX bs=4m
         #
-        # First boot: SSH in as root (password: nostrix) via nostrix.local
-        # then run `nostrix-setup` to apply your real configuration.
+        # First boot: either open http://nostrix.local:8080 from a phone/laptop
+        # on the same network (Basic Auth: root / nostrix) and fill in the
+        # bootstrap setup form, or SSH in as root (password: nostrix) via
+        # nostrix.local and run `nostrix-setup`. Both paths converge on the
+        # same generated flake.nix.
         images.raspberryPi3 = self.lib.mkImage {
           hostname = "nostrix";
           modules  = [
             self.hardware.raspberryPi3
+            self.nixosModules.web
             ({ lib, ... }: {
               # Temporary credentials for first boot only.
               # nostrix-setup will replace these with your SSH key.
@@ -64,6 +76,7 @@
           hostname = "nostrix";
           modules  = [
             self.hardware.raspberryPiZero2W
+            self.nixosModules.web
             ({ lib, ... }: {
               # Temporary credentials for first boot only.
               # nostrix-setup will replace these with your SSH key.

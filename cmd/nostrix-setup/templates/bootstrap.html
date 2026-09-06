@@ -1,0 +1,88 @@
+{{define "bootstrap"}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nostrix — Set up this device</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  fieldset { margin-top: 1.5rem; border: 1px solid #ccc; border-radius: 6px; }
+  legend { font-weight: 600; padding: 0 0.4rem; }
+  label { display: block; margin-top: 1rem; font-weight: 600; }
+  label small { display: block; font-weight: 400; color: #555; }
+  input[type=text], input[type=email], input[type=password], select, textarea {
+    width: 100%; padding: 0.4rem; margin-top: 0.25rem; box-sizing: border-box; font: inherit;
+  }
+  button { margin-top: 1.5rem; padding: 0.6rem 1.2rem; font-size: 1rem; }
+  .status-ok   { color: #1a7f37; }
+  .status-err  { color: #b31d28; }
+  .status-busy { color: #9a6700; }
+</style>
+</head>
+<body>
+<h1>Set up this Nostrix device</h1>
+
+{{if .Rebuilding}}
+  <p class="status-busy">Configuring&hellip; this device is applying its settings now,
+  including its Cloudflare Tunnel. This page may stop responding shortly as it switches
+  to secure remote access — once it does, use the address you'll receive from Cloudflare
+  Access instead of this page.</p>
+{{else}}
+
+{{if .LastError}}
+  <p class="status-err">{{.LastError}}</p>
+{{end}}
+
+<p>This form is reachable only on your local network, and only until this device is
+configured for the first time.</p>
+
+<form method="post" action="/">
+  <fieldset>
+    <legend>Device</legend>
+    <label>Hostname
+      <input type="text" name="hostname" value="{{if .State.Hostname}}{{.State.Hostname}}{{else}}nostrix{{end}}" required>
+    </label>
+    <label>SSH public key <small>optional — leave blank to skip SSH access</small>
+      <textarea name="sshKey" rows="3" placeholder="ssh-ed25519 AAAA...">{{.State.SSHKey}}</textarea>
+    </label>
+    <label>Hardware profile
+      <select name="hardware">
+        <option value="raspberryPi3"      {{if eq .State.Hardware "raspberryPi3"}}selected{{end}}>Raspberry Pi 3</option>
+        <option value="raspberryPi4"      {{if eq .State.Hardware "raspberryPi4"}}selected{{end}}>Raspberry Pi 4</option>
+        <option value="raspberryPiZero2W" {{if eq .State.Hardware "raspberryPiZero2W"}}selected{{end}}>Raspberry Pi Zero 2W</option>
+        <option value="genericX86_64"     {{if eq .State.Hardware "genericX86_64"}}selected{{end}}>Generic x86_64</option>
+      </select>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Remote access</legend>
+    <label>Your email <small>used to allow only you through Cloudflare Access</small>
+      <input type="email" name="ownerEmail" value="{{.State.OwnerEmail}}" required>
+    </label>
+    <label>Cloudflare API token
+      <small>scoped to Tunnel:Edit, Access: Apps and Policies:Edit, and DNS:Edit for one zone</small>
+      <input type="password" name="cfAPIToken" required>
+    </label>
+    <label>Cloudflare account ID
+      <input type="text" name="cfAccountID" required>
+    </label>
+    <label>Cloudflare zone ID
+      <input type="text" name="cfZoneID" required>
+    </label>
+    <label>Base domain <small>e.g. example.com — the device becomes &lt;hostname&gt;.&lt;base domain&gt;</small>
+      <input type="text" name="cfBaseDomain" required>
+    </label>
+    <label>Cloudflare team domain <small>the &lt;team&gt; in &lt;team&gt;.cloudflareaccess.com</small>
+      <input type="text" name="cfTeamDomain" required>
+    </label>
+  </fieldset>
+
+  <button type="submit">Set up device</button>
+</form>
+
+{{end}}
+</body>
+</html>
+{{end}}

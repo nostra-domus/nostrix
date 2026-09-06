@@ -2,10 +2,38 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
-func generate(s state) string {
+// identifierRe matches strings safe to splice into the flake as a bare Nix
+// attribute name (nixosConfigurations.<name>, inputs.<name>). Nix bare
+// identifiers must start with a letter and contain only letters, digits,
+// hyphens, and underscores — anything else at that position would inject
+// arbitrary Nix syntax rather than just a name.
+var identifierRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,62}$`)
+
+func validIdentifier(s string) bool {
+	return identifierRe.MatchString(s)
+}
+
+// escapeNixString escapes s for safe embedding inside a double-quoted Nix
+// string literal: backslash and quote to prevent quote-breakout, and $ to
+// prevent ${...} interpolation.
+func escapeNixString(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`).Replace(s)
+}
+
+func generate(s state) (string, error) {
+	if !validIdentifier(s.Hostname) {
+		return "", fmt.Errorf("invalid hostname %q: must start with a letter and contain only letters, digits, hyphens, and underscores", s.Hostname)
+	}
+	for _, a := range s.Apps {
+		if !validIdentifier(a.Name) {
+			return "", fmt.Errorf("invalid app name %q: must start with a letter and contain only letters, digits, hyphens, and underscores", a.Name)
+		}
+	}
+
 	var b strings.Builder
 	w := b.WriteString
 	f := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
@@ -13,7 +41,7 @@ func generate(s state) string {
 	w("{\n")
 	w("  inputs.nostrix.url = \"github:nostra-domus/nostrix\";\n")
 	for _, a := range s.Apps {
-		f("  inputs.%s.url = \"%s\";\n", a.Name, a.URL)
+		f("  inputs.%s.url = \"%s\";\n", a.Name, escapeNixString(a.URL))
 	}
 	w("\n")
 
@@ -24,10 +52,10 @@ func generate(s state) string {
 	}
 
 	f("    nixosConfigurations.%s = nostrix.lib.mkSystem {\n", s.Hostname)
-	f("      hostname = \"%s\";\n", s.Hostname)
+	f("      hostname = \"%s\";\n", escapeNixString(s.Hostname))
 
 	if s.SSHKey != "" {
-		f("      sshKeys  = [ \"%s\" ];\n", s.SSHKey)
+		f("      sshKeys  = [ \"%s\" ];\n", escapeNixString(s.SSHKey))
 	}
 
 	w("      modules  = [\n")
@@ -51,12 +79,20 @@ func generate(s state) string {
 		w("        }\n")
 	}
 
+	if s.CloudflareTunnelToken != "" {
+		w("        nostrix.nixosModules.cloudflared\n")
+		f("        { services.nostrix-cloudflared.tunnelToken = \"%s\"; }\n", escapeNixString(s.CloudflareTunnelToken))
+		w("        nostrix.nixosModules.web\n")
+		f("        { services.nostrix-web.cloudflareTeamDomain = \"%s\"; services.nostrix-web.cloudflareAud = \"%s\"; }\n",
+			escapeNixString(s.CloudflareTeamDomain), escapeNixString(s.CloudflareAud))
+	}
+
 	w("      ];\n")
 	w("    };\n")
 	w("  };\n")
 	w("}\n")
 
-	return b.String()
+	return b.String(), nil
 }
 
 // hwToNix maps a bare hardware name to its Nix expression.

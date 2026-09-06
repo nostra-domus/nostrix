@@ -12,6 +12,16 @@ type state struct {
 	Hardware    string `json:"hardware"`
 	NginxEnable bool   `json:"nginxEnable"`
 	Apps        []app  `json:"apps,omitempty"`
+
+	// Cloudflare Tunnel + Access, set once the bootstrap web form or the
+	// CLI wizard's equivalent prompts have run. CloudflareAPIToken is
+	// deliberately not one of these fields — it's used transiently to call
+	// the Cloudflare API (see cloudflare.go) and is never persisted here or
+	// written into the generated flake, only its narrower-scoped result is.
+	OwnerEmail            string `json:"ownerEmail,omitempty"`
+	CloudflareTeamDomain  string `json:"cloudflareTeamDomain,omitempty"`
+	CloudflareAud         string `json:"cloudflareAud,omitempty"`
+	CloudflareTunnelToken string `json:"cloudflareTunnelToken,omitempty"`
 }
 
 type app struct {
