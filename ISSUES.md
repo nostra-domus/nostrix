@@ -321,17 +321,89 @@ from-scratch download.
 
 ---
 
+## Add `images.raspberryPi4` SD card image
+
+**Context:** `modules/hardware/raspberry-pi-4.nix` exists and is exposed as
+`nostrix.hardware.raspberryPi4` (`flake.nix`'s `hardware` attrset), but unlike Pi 3 and Pi Zero
+2W, nothing ever turns it into a flashable image — `flake.nix`'s `nixosOutputs` only defines
+`images.raspberryPi3` and `images.raspberryPiZero2W`. The hardware profile itself looks
+complete (BCM2711, extlinux, `enableRedistributableFirmware`, matches the Pi 3/Zero 2W shape
+closely enough that it hasn't needed the zram/max-jobs tuning those two needed — Pi 4 boards
+commonly ship with 2GB+ RAM). Docs are behind too: README's "Hardware profiles" table
+(`README.md:152-158`) doesn't list `raspberryPi4` at all (not just the image — the hardware
+attribute itself is undocumented), and CLAUDE.md's flake-outputs table is missing
+`hardware.raspberryPi3`, `hardware.raspberryPi4`, and `images.raspberryPi3` as well — it only
+lists `hardware.raspberryPiZero2W`/`hardware.genericX86_64` and `images.raspberryPiZero2W`.
+
+**Approach:** Add an `images.raspberryPi4` block to `flake.nix`'s `nixosOutputs`, mirroring
+`images.raspberryPi3` exactly (temporary root password + forced `PasswordAuthentication`/
+`PermitRootLogin`, `nostrix-web` bootstrap module, nginx hardcoded on port 80, pinned
+`system.stateVersion`) but built on `self.hardware.raspberryPi4`. Update README's hardware
+table to add the `raspberryPi4` row, and fix CLAUDE.md's flake-outputs table to include all
+three hardware profiles and both Pi images (not just add Pi 4 — the Pi 3 entries were already
+missing before this item).
+
+**Changes:**
+- `flake.nix` — new `images.raspberryPi4` output.
+- `README.md` — add `nostrix.hardware.raspberryPi4` to the hardware profiles table.
+- `CLAUDE.md` — flake-outputs table: add `hardware.raspberryPi3`, `hardware.raspberryPi4`,
+  `images.raspberryPi3`, `images.raspberryPi4`.
+
+**Verification:** `nix build .#images.raspberryPi4` succeeds; `nix eval
+.#nixosConfigurations` smoke-checks the same way the Pi 3/Zero 2W images already do. On real
+hardware (if a Pi 4 is available): flash, boot over ethernet, confirm `nostrix.local` is
+reachable and `nostrix-setup` completes successfully, same as the Pi 3 verification already
+done for Cloudflare/WiFi.
+
+---
+
+## Implement or retire the `config.yaml` app convention
+
+**Context:** `nostrix-setup add <git-url>` (`cmd/nostrix-setup/add.go`) creates
+`/etc/nostrix/<name>/` and prints "Place your config.yaml there before the service will
+start" — but nothing in the codebase ever reads that file: no Nix module references
+`/etc/nostrix/<name>/config.yaml`, and neither README nor CLAUDE.md document what it's
+supposed to contain or how an app module would consume it. The directory gets created; the
+promise printed alongside it is currently fiction.
+
+Separately, the CLI and web UI have drifted out of parity on app management itself: the web
+UI's `/apps` page already supports add, list, and remove (`handleApps`/`handleAppRemove`/
+`removeApp` in `serve.go`), but `nostrix-setup`'s CLI only has an `add` subcommand — no `list`
+or `remove`. This is the same kind of drift the WiFi item's follow-up flagged and fixed for
+`generate()`'s fields ("keep both entry points in sync"), just for app registration instead.
+
+**Open questions, not yet resolved — needs a design pass before implementation:**
+- What's actually meant to read `config.yaml`? Two very different shapes: (a) Nostrix itself
+  provides some generic mechanism (e.g. a NixOS module that reads YAML from
+  `/etc/nostrix/<name>/config.yaml` and exposes it to the app somehow), or (b) it's purely a
+  per-app-module responsibility — Nostrix's job is only to guarantee the directory exists, and
+  each app's own `nixosModules.default` is expected to read its own config file itself. (b)
+  fits the project's "application-agnostic, bring your own module" design much better than
+  (a), which would require Nostrix to standardize a config schema/injection mechanism it
+  currently has no opinion on.
+- If it's (b): is there anything left to build at all, or is the actual bug just that this
+  contract (directory exists, you read your own file from it) was never written down anywhere
+  an app author would find it?
+- Is `config.yaml` even the right convention to keep, or was it aspirational scaffolding from
+  before the app-registration flow (`d45c4e8`) solidified, worth just removing the misleading
+  printed message instead?
+
+**Changes (rough, pending the above):**
+- At minimum: add `nostrix-setup list` and `nostrix-setup remove <name>` CLI subcommands,
+  reusing the same `removeApp`/state-listing logic `serve.go` already has, for CLI/web parity.
+- Depending on which reading of "config.yaml" above is correct: either document the
+  directory-exists-you-read-it-yourself contract in README (for app authors), or design and
+  implement an actual reading mechanism — and either way, fix or remove `add.go`'s current
+  printed message so it stops promising behavior nothing delivers.
+
+**Verification:** TBD — depends on which direction the design pass above lands on.
+
+---
+
 ## Other gaps found during repo review (2026-08-31), not yet scoped
 
-- **Pi 4 wiring incomplete** — `hardware.raspberryPi4` exists but there's no
-  `images.raspberryPi4` SD-card build output (unlike Pi 3 and Pi Zero 2W), and the README's
-  hardware table doesn't mention Pi 4.
-- **`nostrix-setup add`'s `config.yaml` convention is unimplemented** — it creates
-  `/etc/nostrix/<name>/` and tells the user to place a `config.yaml` there, but nothing (no Nix
-  module, no docs) ever reads that file. No `remove`/`list` counterpart either.
 - **Go test coverage is partial** — `auth_test.go`, `cloudflare_test.go`, and `generate_test.go`
   now cover Access JWT verification, Cloudflare API provisioning, and flake generation. Still
   untested: `appNameFromURL` (git URL parsing, in `add.go`) has the most edge cases of what's left.
 - **No CI** — no `.github/workflows/`; `go test`/`go vet` and the Nix integration check are
   documented but nothing runs them automatically on push/PR.
-- **Minor doc drift** — `CLAUDE.md`'s flake-outputs table is missing `images.raspberryPi3`.
