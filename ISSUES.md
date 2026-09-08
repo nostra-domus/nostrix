@@ -136,6 +136,17 @@ already run against a freshly-fetched flake.
 
 ## Ethernet-free first boot via WiFi AP config portal
 
+**Update (2026-09-08): the sibling WiFi item is now done, unblocking the full pitch.** "Add
+WiFi configuration to the setup wizard" (above) shipped — `state.WifiSSID`/`WifiPSK`,
+`networking.wireless` emission in `generate()`, and prompts in both the CLI wizard and the web
+UI's `/setup` page. The "Deliberately independent" note below still holds (this item is its own
+piece of work — hostapd/dnsmasq, the mode-switch logic, binding the bootstrap form to the AP
+interface, all still to build), but the mode-switch step's dependency on WiFi client support is
+no longer hypothetical: the device now has a real way to join a WiFi network once the AP-served
+form submits credentials, via the same `WifiSSID`/`WifiPSK` fields and `networking.wireless`
+module this item already assumed. That's what makes "phone-only setup with no ethernet ever"
+achievable end-to-end, not just the transient-AP-then-ethernet fallback described below.
+
 **Context:** Today, initial setup always requires an ethernet cable — both the SSH wizard and
 the phone-browser Cloudflare bootstrap flow (`modules/web.nix`'s `nostrix-web` bootstrap mode,
 see the first item in this file) assume the device is already reachable on the LAN. Many
