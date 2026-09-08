@@ -13,6 +13,13 @@ type state struct {
 	NginxEnable bool   `json:"nginxEnable"`
 	Apps        []app  `json:"apps,omitempty"`
 
+	// WiFi client credentials for networking.wireless. Ethernet is required
+	// for the initial nostrix-setup run itself; these just let the device
+	// join a WiFi network afterward. Plaintext in the generated flake and
+	// state file — same trust model as SSHKey above.
+	WifiSSID string `json:"wifiSSID,omitempty"`
+	WifiPSK  string `json:"wifiPSK,omitempty"`
+
 	// Cloudflare Tunnel + Access, set once the bootstrap web form or the
 	// CLI wizard's equivalent prompts have run. CloudflareAPIToken is
 	// deliberately not one of these fields — it's used transiently to call

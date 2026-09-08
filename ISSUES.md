@@ -4,11 +4,12 @@ Lightweight local backlog for work that's been scoped but not yet implemented.
 
 ## Cloudflare provisioning for the web UI's Access auth — done via LAN bootstrap mode
 
-**Status: implemented (2026-09-06).** Originally scoped as a pre-flash, Raspberry-Pi-
-Imager-style provisioning tool run on the installer's own computer before the SD card
-is ever in the Pi. That direction was dropped: it would have required Nix plus
-aarch64 cross-build tooling on the installer's machine, which doesn't work on Windows
-and is awkward on Mac — the opposite of the phone-only goal.
+**Status: implemented and verified end-to-end on real hardware (2026-09-08), merged to
+main.** Originally scoped as a pre-flash, Raspberry-Pi-Imager-style provisioning tool run
+on the installer's own computer before the SD card is ever in the Pi. That direction was
+dropped: it would have required Nix plus aarch64 cross-build tooling on the installer's
+machine, which doesn't work on Windows and is awkward on Mac — the opposite of the
+phone-only goal.
 
 What shipped instead: `modules/web.nix`'s `nostrix-web` service now has a **bootstrap
 mode**, active whenever `cloudflareTeamDomain`/`cloudflareAud` are unset (the state a
@@ -27,6 +28,18 @@ phone browser on the same network as the device, no SSH, no Nix, no laptop. The
 existing SSH-based CLI wizard (`wizard.go`) gained the identical Cloudflare prompts for
 parity, sharing the same `generate()`/`provisionCloudflare` code.
 
+**Real-hardware verification (2026-09-08):** ran the full flow on an actual Pi 3 —
+Cloudflare API calls confirmed against a live account (tunnel, DNS, Access app and
+policy all created correctly), bootstrap form → `nixos-rebuild switch` → automatic
+lockdown all confirmed on-device, and `https://<hostname>.<base-domain>` reachable
+through Cloudflare Access from outside the LAN while the LAN port closed as expected.
+Two unrelated latent bugs surfaced only by building from the real git history (Nix
+flakes only see committed files, unlike local `go build`) and got fixed along the way:
+`nostrix-setup add` never updated its call site after `generate()` gained an error
+return (`cmd/nostrix-setup/add.go`), and the bare `nix` CLI had no experimental-features
+enabled (only `nixos-rebuild`'s own internal invocations did) — now set globally in
+`modules/base.nix`.
+
 **Remaining scope, not yet done:** the device's ultimate *recipient*, if different from
 whoever fills in the bootstrap form (e.g. an operator setting up a device for a
 non-technical family member), still can't do so with only an email address — the form
@@ -38,6 +51,8 @@ bigger piece of infrastructure, deliberately out of scope for this pass.
 ---
 
 ## Add WiFi configuration to the setup wizard
+
+**Status: implemented (2026-09-08).**
 
 **Context:** Nostrix has no WiFi support anywhere — no `networking.wireless` config in
 `base.nix`, any hardware profile, or the wizard. A Pi 3 (or Pi 4 / Zero 2W) currently
@@ -88,16 +103,74 @@ single-user Pi; not worth adding secrets management for.
 
 **Verification:**
 
-- `go build ./cmd/nostrix-setup && go vet ./...`
+- `go build ./cmd/nostrix-setup && go vet ./...` — done, passes.
 - Run `./nostrix-setup --dry-run`, answer the WiFi prompt with a test SSID/password, confirm the
   printed flake.nix contains the `networking.wireless` block, and that skipping (blank SSID)
-  omits it entirely.
+  omits it entirely — done, both confirmed (also covered by
+  `TestGenerateIncludesWifiWhenSet`/`TestGenerateOmitsWifiWhenUnset` in `generate_test.go`).
 - Manually eval the generated snippet's shape against a real hardware profile, e.g. drop the
   generated module into a scratch flake using `nostrix.hardware.raspberryPi3` and run `nix eval`
-  on `config.networking.wireless.networks` to confirm it evaluates cleanly.
+  on `config.networking.wireless.networks` to confirm it evaluates cleanly — done, evaluates
+  cleanly.
 - On real hardware (if available before merging): flash `images.raspberryPi3`, boot over
   ethernet, run `nostrix-setup` with real WiFi credentials, confirm `nixos-rebuild switch`
-  succeeds and the Pi is reachable at `nostrix.local` after unplugging ethernet.
+  succeeds and the Pi is reachable at `nostrix.local` after unplugging ethernet — **not done**, no
+  device available this pass.
+
+---
+
+## Ethernet-free first boot via WiFi AP config portal
+
+**Context:** Today, initial setup always requires an ethernet cable — both the SSH wizard and
+the phone-browser Cloudflare bootstrap flow (`modules/web.nix`'s `nostrix-web` bootstrap mode,
+see the first item in this file) assume the device is already reachable on the LAN. Many
+consumer devices (Chromecast, smart plugs, mesh routers, etc.) avoid this by booting into their
+own WiFi access point when unconfigured; you connect a phone to that hotspot directly, fill in a
+setup form served from the device itself, and the device then joins the real network.
+
+**Approach:** When unconfigured (same trigger state as the existing bootstrap mode — no
+Cloudflare/hostname config present yet, or more precisely no completed `nostrix-setup` run), the
+Pi would run `hostapd` to broadcast its own AP (SSID e.g. `nostrix-setup-<hostname>`, fixed
+passphrase — same trust level as the existing temporary root SSH password and bootstrap shared
+credential) plus a DHCP server (`dnsmasq` or similar) on the WiFi interface. The existing
+bootstrap web UI (`nostrix-web` bootstrap mode, `bootstrap.html`) would bind to the AP interface
+instead of (or in addition to) the LAN, so a phone connecting to the hotspot can reach the setup
+form directly at a fixed AP-gateway address. Submitting the form applies the config as today
+(`generate()` + `nixos-rebuild switch`), then the device needs to tear down `hostapd` and bring
+up its real networking (ethernet, or WiFi client mode if the sibling WiFi item below is also in
+place) — a genuine mode-switch since the Pi typically has a single WiFi radio that can't be AP
+and client simultaneously.
+
+**Deliberately independent of "Add WiFi configuration to the setup wizard" (above):** that item
+is about the day-2 wizard prompting for WiFi *client* credentials to join a network. This item is
+about the *delivery mechanism* for reaching the device at all during first boot, and doesn't
+strictly require WiFi client support to exist — the AP could be used purely as a transient config
+channel while the device keeps using ethernet for steady-state operation, which still solves the
+"must already be on the same LAN as the device" problem for phone-only setup. The two items
+combine for the full pitch (phone-only setup with no ethernet ever, before or after
+configuration), but each should be implementable and useful on its own.
+
+**Open questions, not yet resolved:**
+- Trigger condition for entering AP mode: always when unconfigured, or only when no ethernet
+  link is detected (so a plugged-in cable still gets today's LAN-bootstrap behavior unchanged)?
+- Captive-portal UX: rely on the phone's OS auto-detecting the captive portal and prompting the
+  user (needs a detection endpoint mimicking what iOS/Android probe for), or keep it simple for a
+  first pass and just tell the user to open a fixed IP in their browser?
+- Whether `hostapd` config (SSID/passphrase) should be static per-image or randomized/printed on
+  first boot somehow — static is simpler but means anyone in WiFi range of an unconfigured device
+  can see the setup form until it's locked down.
+
+**Changes (rough, needs a real design pass before implementation):**
+- New hardware/base module for `hostapd` + DHCP server, gated on the "unconfigured" trigger
+  condition (mirrors how `modules/web.nix` already gates bootstrap mode).
+- `modules/web.nix` — bind bootstrap mode to the AP interface as well as/instead of LAN.
+- Mode-switch logic (systemd service/script) to stop the AP and start real networking after
+  `nixos-rebuild switch` completes.
+- README/CLAUDE.md updates describing the new no-ethernet setup path.
+
+**Verification:** Flash a device, boot it with no ethernet connected, confirm a hotspot appears,
+connect a phone to it, complete the setup form, confirm the device applies config and becomes
+reachable on the real network afterward (ethernet or WiFi per whatever was configured).
 
 ---
 
@@ -164,9 +237,9 @@ from-scratch download.
 - **`nostrix-setup add`'s `config.yaml` convention is unimplemented** — it creates
   `/etc/nostrix/<name>/` and tells the user to place a `config.yaml` there, but nothing (no Nix
   module, no docs) ever reads that file. No `remove`/`list` counterpart either.
-- **Zero Go test coverage** — no `_test.go` files anywhere, despite `CLAUDE.md` documenting
-  `go test ./...`. `appNameFromURL` (git URL parsing) has the most edge cases and would benefit
-  most.
+- **Go test coverage is partial** — `auth_test.go`, `cloudflare_test.go`, and `generate_test.go`
+  now cover Access JWT verification, Cloudflare API provisioning, and flake generation. Still
+  untested: `appNameFromURL` (git URL parsing, in `add.go`) has the most edge cases of what's left.
 - **No CI** — no `.github/workflows/`; `go test`/`go vet` and the Nix integration check are
   documented but nothing runs them automatically on push/PR.
 - **Minor doc drift** — `CLAUDE.md`'s flake-outputs table is missing `images.raspberryPi3`.

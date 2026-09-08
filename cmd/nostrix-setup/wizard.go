@@ -42,11 +42,21 @@ func runWizard() {
 	fmt.Println("Addons:")
 	nginxEnable := promptBool(r, "  nginx webserver (port 80)", true)
 
+	fmt.Println()
+	fmt.Println("WiFi — leave blank to skip and use ethernet only.")
+	wifiSSID := prompt(r, "  SSID", "")
+	var wifiPSK string
+	if wifiSSID != "" {
+		wifiPSK = prompt(r, "  Password", "")
+	}
+
 	s := state{
 		Hostname:    hostname,
 		SSHKey:      sshKey,
 		Hardware:    hwChoice(hw),
 		NginxEnable: nginxEnable,
+		WifiSSID:    wifiSSID,
+		WifiPSK:     wifiPSK,
 	}
 
 	fmt.Println()

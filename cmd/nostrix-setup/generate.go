@@ -79,6 +79,14 @@ func generate(s state) (string, error) {
 		w("        }\n")
 	}
 
+	if s.WifiSSID != "" {
+		w("        {\n")
+		w("          networking.wireless.enable = true;\n")
+		f("          networking.wireless.networks.\"%s\" = { psk = \"%s\"; };\n",
+			escapeNixString(s.WifiSSID), escapeNixString(s.WifiPSK))
+		w("        }\n")
+	}
+
 	if s.CloudflareTunnelToken != "" {
 		w("        nostrix.nixosModules.cloudflared\n")
 		f("        { services.nostrix-cloudflared.tunnelToken = \"%s\"; }\n", escapeNixString(s.CloudflareTunnelToken))

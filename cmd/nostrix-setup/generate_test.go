@@ -41,6 +41,53 @@ func TestGenerateIncludesCloudflareWhenSet(t *testing.T) {
 	}
 }
 
+func TestGenerateOmitsWifiWhenUnset(t *testing.T) {
+	out, err := generate(state{Hostname: "pi-test", Hardware: "raspberryPiZero2W"})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if strings.Contains(out, "networking.wireless") {
+		t.Errorf("expected no networking.wireless block when WifiSSID is unset, got:\n%s", out)
+	}
+}
+
+func TestGenerateIncludesWifiWhenSet(t *testing.T) {
+	s := state{
+		Hostname: "pi-test",
+		Hardware: "raspberryPiZero2W",
+		WifiSSID: "myssid",
+		WifiPSK:  "mypassword",
+	}
+	out, err := generate(s)
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	for _, want := range []string{
+		"networking.wireless.enable = true;",
+		`networking.wireless.networks."myssid" = { psk = "mypassword"; };`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("generated flake missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestGenerateEscapesWifiValues(t *testing.T) {
+	s := state{
+		Hostname: "pi-test",
+		Hardware: "raspberryPiZero2W",
+		WifiSSID: `ssid"; malicious = true; x = "`,
+		WifiPSK:  "pass",
+	}
+	out, err := generate(s)
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if strings.Contains(out, `ssid"; malicious = true`) {
+		t.Errorf("WiFi SSID was not escaped, got:\n%s", out)
+	}
+}
+
 func TestGenerateEscapesCloudflareValues(t *testing.T) {
 	s := state{
 		Hostname:              "pi-test",

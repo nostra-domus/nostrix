@@ -157,6 +157,15 @@ in
 | `nostrix.hardware.raspberryPiZero2W` | Raspberry Pi Zero 2W |
 | `nostrix.hardware.genericX86_64` | PC, VM, or VPS (systemd-boot + EFI) |
 
+### Setup wizard
+
+`nostrix-setup` is an interactive wizard (`nix run github:nostra-domus/nostrix`) that
+prompts for hostname, SSH key, hardware profile, and addons, then generates and applies
+`/etc/nixos/flake.nix`. Ethernet is required for this initial run. Among the prompts is
+an optional WiFi SSID/password, emitted as a `networking.wireless` block so the device
+can join a WiFi network afterward — the password is stored in plaintext in the generated
+flake and Nix store, same trust model as the pasted SSH key.
+
 ### `lib.mkImage` and `lib.mkSystem`
 
 `lib.mkImage` builds a compressed SD card image (`.img.zst`). It accepts the
