@@ -127,10 +127,13 @@ already run against a freshly-fetched flake.
   generated module into a scratch flake using `nostrix.hardware.raspberryPi3` and run `nix eval`
   on `config.networking.wireless.networks` to confirm it evaluates cleanly — done, evaluates
   cleanly.
-- On real hardware (if available before merging): flash `images.raspberryPi3`, boot over
-  ethernet, run `nostrix-setup` with real WiFi credentials, confirm `nixos-rebuild switch`
-  succeeds and the Pi is reachable at `nostrix.local` after unplugging ethernet — **in progress
-  (2026-09-08)**, see follow-up below.
+- On real hardware: flash `images.raspberryPi3`, boot over ethernet, run `nostrix-setup` with
+  real WiFi credentials, confirm `nixos-rebuild switch` succeeds and the Pi is reachable at
+  `nostrix.local` after unplugging ethernet — **done (2026-09-08)**, see follow-ups below for
+  the road to get there (two unrelated bugs surfaced and fixed along the way). Final
+  confirmation: `wlan0` associated with a DHCP address, and with ethernet unplugged, `ping`/
+  `ssh` to `nostrix-pi01.local` and the device's Cloudflare Tunnel URL all worked from another
+  device on the WiFi network.
 
 **Follow-up (2026-09-08): real-hardware WiFi test surfaced a separate, more general
 livelock bug — fixed (`db049ac`).** Testing the WiFi flow on a live Pi 3 (via the web UI's
@@ -169,9 +172,31 @@ to `nixos-rebuild boot` (which skips the inhibitor check entirely) followed by a
 same situation for the weekly auto-upgrade. Without this, the wizard/web UI (and the CLI
 wizard/`add`) would dead-end on an error a phone-only or remote user has no way to act on.
 `go build`/`go vet`/`go test ./...` and `nix build .#default` all pass; CLAUDE.md's setup
-wizard flow description updated to match. Still needs a real-hardware confirmation that the
-fallback actually fires and reboots cleanly the next time a switch-inhibited change comes
-through.
+wizard flow description updated to match. **Not yet confirmed on real hardware**: this fix
+was pushed after the dbus-broker switch had already been resolved manually (`nixos-rebuild
+boot` + reboot, run by hand before the fix existed), so the device's own switch→boot fallback
+path has never actually fired. The immediately following "exit status 1" the web UI showed
+turned out to be an unrelated, non-reproducing flake — the identical `nixos-rebuild switch
+--upgrade-all` succeeded cleanly (`Checking switch inhibitors... done`) when run by hand
+moments later, most likely Nix store/daemon lock contention from two rebuild requests landing
+within ~8s of each other (`/setup` save, then "Rebuild now") rather than anything wrong with
+the generated config. Remains open: trigger a genuine switch-inhibited change on this device
+(or any Nostrix system) through the wizard/web UI and confirm the fallback to `boot` + reboot
+actually engages end-to-end.
+
+**Follow-up (2026-09-08): WiFi real-hardware verification now fully closed.** With both fixes
+above in place, WiFi was re-verified on the Pi 3 end-to-end: `wlan0` came up via
+`networking.wireless`/`wpa_supplicant.service` with a DHCP-assigned address, and with the
+ethernet cable unplugged, `ping`/`ssh` to `nostrix-pi01.local` and the device's Cloudflare
+Tunnel URL all worked from another device on the WiFi network. The "Add WiFi configuration to
+the setup wizard" item above is now fully verified, not just implemented.
+
+One minor, non-blocking rough edge noticed along the way: `nostrix-web`'s "Last rebuild
+failed: ..." banner (`srv.lastError` in `serve.go`) is in-memory and sticky — it only clears
+on the *next* rebuild the web UI itself runs (or a process restart/reboot), so a transient
+failure like the one above leaves a stale "failed" banner up indefinitely even once the system
+is demonstrably healthy, until someone happens to trigger another rebuild. Not scoped/fixed
+here; low priority.
 
 ---
 
