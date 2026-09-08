@@ -26,10 +26,15 @@
     options = [ "noatime" ];
   };
 
-  # zram swap compensates for the 512MB RAM limit.
-  zramSwap.enable = true;
+  # zram swap compensates for the 512MB RAM limit. 150% (see raspberry-pi-3.nix,
+  # same underlying issue and even less RAM here) trades more RAM for swap
+  # capacity — this board is expected to be slow to rebuild, not fast.
+  zramSwap.enable        = true;
+  zramSwap.memoryPercent = 150;
 
-  # Build locally with a single job to avoid OOM.
-  # Remote builds (via nix.buildMachines) ignore this.
+  # Build locally with a single job, one core each, to keep peak memory use
+  # as low as possible — slower is fine, OOM/livelock is not.
+  # Remote builds (via nix.buildMachines) ignore both.
   nix.settings.max-jobs = 1;
+  nix.settings.cores    = 1;
 }

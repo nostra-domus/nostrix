@@ -26,10 +26,17 @@
   };
 
   # zram swap gives nixos-rebuild enough headroom to evaluate/build without
-  # being OOM-killed.
-  zramSwap.enable = true;
+  # being OOM-killed. 50% (the default) wasn't enough headroom in practice —
+  # evaluating a full nixos-unstable + nostrix closure on 1GB of RAM still
+  # drove the box into swap-thrashing livelock. Trading more RAM for
+  # compressed swap capacity is fine here: this board is expected to be
+  # slow to rebuild, not fast.
+  zramSwap.enable        = true;
+  zramSwap.memoryPercent = 150;
 
-  # Build locally with a single job to avoid OOM.
-  # Remote builds (via nix.buildMachines) ignore this.
+  # Build locally with a single job, one core each, to keep peak memory use
+  # as low as possible — slower is fine, OOM/livelock is not.
+  # Remote builds (via nix.buildMachines) ignore both.
   nix.settings.max-jobs = 1;
+  nix.settings.cores    = 1;
 }

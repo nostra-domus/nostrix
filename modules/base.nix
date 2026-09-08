@@ -49,4 +49,15 @@
   # doesn't cover a bare `nix ...` call (e.g. `nix flake update`) — enable
   # both globally so the plain CLI works too, on every Nostrix system.
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
+
+  # systemd-oomd ships enabled by default but doesn't watch any slice by
+  # default (enableRootSlice/enableSystemSlice/enableUserSlices all false) —
+  # so it never actually intervenes. On memory-constrained boards (Pi 3,
+  # Pi Zero 2W) a `nixos-rebuild switch` that outgrows RAM+swap doesn't get
+  # killed by the kernel either, since zram swap makes just enough memory
+  # "available" to avoid a hard OOM — instead the whole box livelocks under
+  # swap thrashing, taking SSH down with it. Watching the root slice lets
+  # oomd kill the offending process under sustained memory/swap pressure
+  # before that happens, on every Nostrix system (not just low-RAM boards).
+  systemd.oomd.enableRootSlice = true;
 }
