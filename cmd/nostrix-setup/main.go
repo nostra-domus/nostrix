@@ -52,8 +52,11 @@ func printUsage() {
 	fmt.Println("  --cf-aud          Cloudflare Access application audience  (serve; required)")
 }
 
-// apply writes content to path and runs nixos-rebuild switch.
-func apply(path, content string) error {
+// apply writes content to path and runs nixos-rebuild switch. With
+// upgradeAll, it also passes --upgrade-all so the switch first re-resolves
+// every flake input (nostrix, nixpkgs, ...) to its latest revision instead
+// of reusing whatever's pinned in the local flake.lock.
+func apply(path, content string, upgradeAll bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -63,7 +66,11 @@ func apply(path, content string) error {
 	fmt.Printf("Written %s\n\n", path)
 
 	flakeDir := filepath.Dir(path)
-	fmt.Printf("Running: nixos-rebuild switch --flake %s\n\n", flakeDir)
+	args := []string{"switch", "--flake", flakeDir}
+	if upgradeAll {
+		args = append(args, "--upgrade-all")
+	}
+	fmt.Printf("Running: nixos-rebuild %s\n\n", strings.Join(args, " "))
 
 	var cmd *exec.Cmd
 	if os.Getenv("INVOCATION_ID") != "" {
@@ -73,10 +80,10 @@ func apply(path, content string) error {
 		// very unit this process runs under partway through. Run
 		// nixos-rebuild in its own transient scope, outside nostrix-web's
 		// cgroup, so that restart doesn't tear down the switch in progress.
-		cmd = exec.Command("systemd-run", "--collect", "--wait", "--pipe",
-			"nixos-rebuild", "switch", "--flake", flakeDir)
+		systemdRunArgs := append([]string{"--collect", "--wait", "--pipe", "nixos-rebuild"}, args...)
+		cmd = exec.Command("systemd-run", systemdRunArgs...)
 	} else {
-		cmd = exec.Command("nixos-rebuild", "switch", "--flake", flakeDir)
+		cmd = exec.Command("nixos-rebuild", args...)
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

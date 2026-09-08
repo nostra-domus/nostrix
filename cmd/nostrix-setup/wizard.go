@@ -92,7 +92,7 @@ func runWizard() {
 	if err := saveState(*stateFile, s); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not save state: %v\n", err)
 	}
-	if err := apply(*output, flake); err != nil {
+	if err := apply(*output, flake, false); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

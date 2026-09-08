@@ -171,6 +171,8 @@ func (srv *server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		s.SSHKey = strings.TrimSpace(r.FormValue("sshKey"))
 		s.Hardware = r.FormValue("hardware")
 		s.NginxEnable = r.FormValue("nginx") == "on"
+		s.WifiSSID = strings.TrimSpace(r.FormValue("wifiSSID"))
+		s.WifiPSK = strings.TrimSpace(r.FormValue("wifiPSK"))
 
 		if err := srv.applyState(s); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -234,6 +236,11 @@ func (srv *server) handleAppRemove(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/apps", http.StatusSeeOther)
 }
 
+// handleRebuild is the index page's explicit "Rebuild now" button. Unlike
+// the rebuilds triggered by saving Setup/Apps/bootstrap, this one passes
+// upgradeAll: it's the user's deliberate call to pull in whatever's changed
+// upstream (nostrix, nixpkgs) since the flake was last resolved, not just
+// re-apply the state already on disk.
 func (srv *server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -245,7 +252,7 @@ func (srv *server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	srv.rebuildAsync(flake)
+	srv.rebuildAsync(flake, true)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -260,14 +267,14 @@ func (srv *server) applyState(s state) error {
 	if err := saveState(srv.stateFile, s); err != nil {
 		return err
 	}
-	srv.rebuildAsync(flake)
+	srv.rebuildAsync(flake, false)
 	return nil
 }
 
 // rebuildAsync writes the flake and runs nixos-rebuild switch in the
 // background, since it can take minutes. A rebuild already in progress is
 // left to finish rather than starting a second, overlapping one.
-func (srv *server) rebuildAsync(flake string) {
+func (srv *server) rebuildAsync(flake string, upgradeAll bool) {
 	srv.mu.Lock()
 	if srv.rebuilding {
 		srv.mu.Unlock()
@@ -278,7 +285,7 @@ func (srv *server) rebuildAsync(flake string) {
 	srv.mu.Unlock()
 
 	go func() {
-		err := apply(srv.output, flake)
+		err := apply(srv.output, flake, upgradeAll)
 
 		srv.mu.Lock()
 		srv.rebuilding = false

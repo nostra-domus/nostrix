@@ -101,6 +101,21 @@ single-user Pi; not worth adding secrets management for.
   ethernet-for-first-boot requirement and the plaintext-PSK caveat.
 - `CLAUDE.md` — update the "Setup wizard flow" bullet to include WiFi SSID/password.
 
+**Follow-up (2026-09-08): brought to parity with the web UI, plus a Rebuild fix.** The CLI
+wizard and the web configuration UI (`nostrix-web`'s configured-mode `/setup` page) both feed
+the same `generate()`, so both now expose the same fields — WiFi SSID/password were added to
+`templates/setup.html` and `handleSetup` in `serve.go`, with the current SSID also shown on the
+status page (`templates/index.html`). Keep both entry points in sync going forward: any field
+added to one belongs in the other too.
+
+While wiring this up, fixed a separate bug found in the same code path: the web UI's "Rebuild
+now" button (`handleRebuild`) called plain `nixos-rebuild switch`, which only re-applies the
+already-resolved `flake.lock` — it could never pick up upstream nostrix/nixpkgs changes (e.g.
+this very WiFi feature) the way the CLI wizard's fresh `nix run` invocation does. It now passes
+`--upgrade-all` (`apply()` in `main.go` gained an `upgradeAll bool` parameter, threaded through
+`rebuildAsync`); the wizard's and `add`'s own `apply()` calls stay non-upgrading, since those
+already run against a freshly-fetched flake.
+
 **Verification:**
 
 - `go build ./cmd/nostrix-setup && go vet ./...` — done, passes.

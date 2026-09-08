@@ -64,7 +64,7 @@ func runAdd(args []string) {
 		fmt.Fprintf(os.Stderr, "error: could not save state: %v\n", err)
 		os.Exit(1)
 	}
-	if err := apply(*output, flake); err != nil {
+	if err := apply(*output, flake, false); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
