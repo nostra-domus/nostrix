@@ -68,7 +68,7 @@ Application modules are not part of `nixosModules.default`. Callers pass them in
 
 ### Setup wizard flow
 
-`cmd/nostrix-setup/main.go` prompts for hostname, SSH key, hardware profile, addon choices (currently: nginx on/off), and optional WiFi SSID/password (`networking.wireless`, ethernet still required for the initial run itself), then generates a `flake.nix` calling `nostrix.lib.mkSystem`, writes it to `--output` (default `/etc/nixos/flake.nix`), and runs `nixos-rebuild switch --flake /etc/nixos`. Use `--dry-run` to preview without writing.
+`cmd/nostrix-setup/main.go` prompts for hostname, SSH key, hardware profile, addon choices (currently: nginx on/off), and optional WiFi SSID/password (`networking.wireless`, ethernet still required for the initial run itself), then generates a `flake.nix` calling `nostrix.lib.mkSystem`, writes it to `--output` (default `/etc/nixos/flake.nix`), and runs `nixos-rebuild switch --flake /etc/nixos` (`apply()` in `main.go`). If `switch` is blocked by a pre-switch check — a critical-component change (e.g. the D-Bus implementation) NixOS refuses to hot-swap live — `apply()` falls back to `nixos-rebuild boot` plus a scheduled reboot, mirroring how `system.autoUpgrade`'s `allowReboot` already handles this case. Use `--dry-run` to preview without writing.
 
 ### Integration test
 

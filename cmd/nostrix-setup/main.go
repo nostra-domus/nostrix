@@ -13,7 +13,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,10 +54,26 @@ func printUsage() {
 	fmt.Println("  --cf-aud          Cloudflare Access application audience  (serve; required)")
 }
 
+// switchInhibitedMarker is the message NixOS's pre-switch checks print
+// (nixos/modules/system/activation/pre-switch-check.nix) when `switch`
+// refuses to hot-apply a change to a critical component (e.g. the D-Bus
+// implementation) that it considers unsafe to swap into a live system.
+// `nixos-rebuild boot` skips this check entirely, so a plain boot+reboot
+// always gets past it.
+const switchInhibitedMarker = "Pre-switch checks failed"
+
 // apply writes content to path and runs nixos-rebuild switch. With
 // upgradeAll, it also passes --upgrade-all so the switch first re-resolves
 // every flake input (nostrix, nixpkgs, ...) to its latest revision instead
 // of reusing whatever's pinned in the local flake.lock.
+//
+// If switch is blocked by a pre-switch check — a critical-component change
+// (D-Bus implementation, systemd, ...) NixOS refuses to hot-swap live —
+// this falls back to `nixos-rebuild boot` plus a scheduled reboot, the same
+// resolution system.autoUpgrade's allowReboot already uses for exactly this
+// case (base.nix). Without this, the wizard/web UI would dead-end on an
+// error that a phone-only or remote user has no way to act on (the fix is
+// literally "run a different nixos-rebuild subcommand and reboot").
 func apply(path, content string, upgradeAll bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -65,8 +83,33 @@ func apply(path, content string, upgradeAll bool) error {
 	}
 	fmt.Printf("Written %s\n\n", path)
 
+	switchErr, output := runRebuild(path, "switch", upgradeAll)
+	if switchErr == nil {
+		return nil
+	}
+	if !strings.Contains(output, switchInhibitedMarker) {
+		return switchErr
+	}
+
+	fmt.Println()
+	fmt.Println("Switch blocked by a critical-component change (see above) — falling back")
+	fmt.Println("to `nixos-rebuild boot` plus a reboot, same as the weekly auto-upgrade does")
+	fmt.Println("for this case.")
+	fmt.Println()
+	if bootErr, _ := runRebuild(path, "boot", upgradeAll); bootErr != nil {
+		return bootErr
+	}
+
+	fmt.Println("Rebooting in 1 minute to activate the new generation...")
+	return exec.Command("shutdown", "-r", "+1", "Nostrix: rebooting to apply pending configuration").Run()
+}
+
+// runRebuild runs `nixos-rebuild <action> --flake <dir>`, streaming its
+// output live (as before) while also capturing it, so apply() can inspect
+// it for switchInhibitedMarker without changing what the user/journal sees.
+func runRebuild(path, action string, upgradeAll bool) (error, string) {
 	flakeDir := filepath.Dir(path)
-	args := []string{"switch", "--flake", flakeDir}
+	args := []string{action, "--flake", flakeDir}
 	if upgradeAll {
 		args = append(args, "--upgrade-all")
 	}
@@ -85,9 +128,12 @@ func apply(path, content string, upgradeAll bool) error {
 	} else {
 		cmd = exec.Command("nixos-rebuild", args...)
 	}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	var captured bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &captured)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &captured)
+	err := cmd.Run()
+	return err, captured.String()
 }
 
 func prompt(r *bufio.Reader, label, def string) string {

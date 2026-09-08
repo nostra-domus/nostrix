@@ -129,8 +129,49 @@ already run against a freshly-fetched flake.
   cleanly.
 - On real hardware (if available before merging): flash `images.raspberryPi3`, boot over
   ethernet, run `nostrix-setup` with real WiFi credentials, confirm `nixos-rebuild switch`
-  succeeds and the Pi is reachable at `nostrix.local` after unplugging ethernet — **not done**, no
-  device available this pass.
+  succeeds and the Pi is reachable at `nostrix.local` after unplugging ethernet — **in progress
+  (2026-09-08)**, see follow-up below.
+
+**Follow-up (2026-09-08): real-hardware WiFi test surfaced a separate, more general
+livelock bug — fixed (`db049ac`).** Testing the WiFi flow on a live Pi 3 (via the web UI's
+`/setup` page, device already configured from the earlier Cloudflare test) triggered a
+`nixos-rebuild switch` that hung the entire box, including SSH — not the WiFi feature's fault,
+but a pre-existing gap in the Pi 3's OOM handling that this rebuild happened to trip. Root
+cause: `systemd-oomd` ships enabled by default but watches no cgroup slice out of the box
+(`enableRootSlice`/`enableSystemSlice`/`enableUserSlices` all default false), so it never
+intervenes; the kernel OOM killer doesn't fire either, since zram swap (added in `42b319e`)
+makes just enough memory "available" to avoid a hard OOM — so instead of getting killed, the
+box livelocked under swap thrashing, taking SSH down with it. Fixed by:
+- `modules/base.nix` — `systemd.oomd.enableRootSlice = true`, on every Nostrix system (not
+  just low-RAM boards): if a rebuild spirals, oomd now kills the offending process before the
+  whole box livelocks, instead of nothing happening.
+- `raspberry-pi-3.nix` / `raspberry-pi-zero-2w.nix` — `zramSwap.memoryPercent` raised from the
+  50% default to 150%, plus `nix.settings.cores = 1` alongside the existing `max-jobs = 1`, to
+  give the evaluator more real headroom before oomd needs to step in at all.
+
+Deliberately kept on-device building as the model (per project design) rather than moving to
+a `--target-host` remote-build workflow, which would have sidestepped the memory pressure
+entirely but was explicitly ruled out — on-device building is a core Nostrix feature. Slower
+rebuilds under memory pressure are an accepted tradeoff; a hung, unreachable box is not.
+
+Still needed to close out the WiFi item's real-hardware verification: re-run the WiFi `/setup`
+submission on the Pi 3 with this fix in place and confirm it completes (however slowly) and
+the Pi is reachable at `nostrix.local` over WiFi with ethernet unplugged.
+
+**Follow-up (2026-09-08): a second, unrelated blocker hit on the same retest — `nixos-rebuild
+switch` refusing to switch after a `--upgrade-all` moved the nixpkgs pin forward and changed
+the default D-Bus implementation (`dbus` → `dbus-broker`), which NixOS's pre-switch checks
+correctly refuse to hot-swap into a live system ("Pre-switch checks failed" /
+`switchInhibitors`). Fixed in `apply()` (`cmd/nostrix-setup/main.go`): it now tries
+`nixos-rebuild switch` first as before, and only when that specific failure occurs falls back
+to `nixos-rebuild boot` (which skips the inhibitor check entirely) followed by a
+`shutdown -r +1` — mirroring how `system.autoUpgrade`'s `allowReboot` already resolves this
+same situation for the weekly auto-upgrade. Without this, the wizard/web UI (and the CLI
+wizard/`add`) would dead-end on an error a phone-only or remote user has no way to act on.
+`go build`/`go vet`/`go test ./...` and `nix build .#default` all pass; CLAUDE.md's setup
+wizard flow description updated to match. Still needs a real-hardware confirmation that the
+fallback actually fires and reboots cleanly the next time a switch-inhibited change comes
+through.
 
 ---
 
