@@ -57,8 +57,24 @@ func runServe(args []string) {
 	// service in the branch below.
 	if *cfTeamDomain == "" && *cfAud == "" {
 		mux.HandleFunc("/", srv.handleBootstrap)
+		registerCaptivePortalRoutes(mux)
+		handler := requireBasicAuth(bootstrapUser, bootstrapPassword, mux)
+
+		// Best-effort: only reachable at all when modules/ap-portal.nix's
+		// setup access point is up and has opened port 80 on wlan0 (plain
+		// ethernet-based LAN bootstrap doesn't open it, so this listener
+		// simply goes unused there). Runs alongside, not instead of, the
+		// primary *addr listener below — a bind failure here (e.g. no
+		// permission, or the AP module isn't present on this image) must
+		// not take down bootstrap mode entirely.
+		go func() {
+			if err := http.ListenAndServe(":80", handler); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: captive-portal listener on :80: %v\n", err)
+			}
+		}()
+
 		fmt.Printf("Nostrix web UI listening on http://%s (bootstrap mode — not yet configured)\n", *addr)
-		if err := http.ListenAndServe(*addr, requireBasicAuth(bootstrapUser, bootstrapPassword, mux)); err != nil {
+		if err := http.ListenAndServe(*addr, handler); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -113,6 +129,8 @@ func (srv *server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	s.SSHKey = strings.TrimSpace(r.FormValue("sshKey"))
 	s.Hardware = r.FormValue("hardware")
 	s.OwnerEmail = strings.TrimSpace(r.FormValue("ownerEmail"))
+	s.WifiSSID = strings.TrimSpace(r.FormValue("wifiSSID"))
+	s.WifiPSK = strings.TrimSpace(r.FormValue("wifiPSK"))
 
 	client := newCloudflareClient(strings.TrimSpace(r.FormValue("cfAPIToken")))
 	cfCfg := cloudflareConfig{

@@ -25,9 +25,10 @@
 
 {{if .Rebuilding}}
   <p class="status-busy">Configuring&hellip; this device is applying its settings now,
-  including its Cloudflare Tunnel. This page may stop responding shortly as it switches
-  to secure remote access — once it does, use the address you'll receive from Cloudflare
-  Access instead of this page.</p>
+  including its Cloudflare Tunnel. This page may stop responding shortly — if you're on
+  this device's own setup hotspot, your phone will disconnect from it as it shuts down;
+  if you're on the LAN, the page will just stop responding — either way, once it does,
+  use the address you'll receive from Cloudflare Access instead of this page.</p>
 {{else}}
 
 {{if .LastError}}
@@ -53,6 +54,14 @@ configured for the first time.</p>
         <option value="raspberryPiZero2W" {{if eq .State.Hardware "raspberryPiZero2W"}}selected{{end}}>Raspberry Pi Zero 2W</option>
         <option value="genericX86_64"     {{if eq .State.Hardware "genericX86_64"}}selected{{end}}>Generic x86_64</option>
       </select>
+    </label>
+    <label>WiFi SSID
+      <small>needed if this device has no ethernet cable connected — otherwise it
+      won't be reachable after setup. Leave blank if it's staying on ethernet.</small>
+      <input type="text" name="wifiSSID" value="{{.State.WifiSSID}}">
+    </label>
+    <label>WiFi password
+      <input type="text" name="wifiPSK" value="{{.State.WifiPSK}}">
     </label>
   </fieldset>
 

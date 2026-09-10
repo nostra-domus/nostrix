@@ -202,6 +202,65 @@ here; low priority.
 
 ## Ethernet-free first boot via WiFi AP config portal
 
+**Status: implemented (2026-09-10).** The three open questions below are resolved:
+AP mode triggers only when no ethernet link is detected at boot (a plugged-in cable
+keeps today's LAN bootstrap mode unchanged); the SSID/passphrase are static
+(`nostrix-setup-<hostname>` / `nostrix-setup`), same trust level as the existing
+temporary root SSH password; and real OS captive-portal auto-detection is
+implemented (redirecting the known Android/Apple/Windows probe paths, plus DHCP
+option 114 for RFC 8910-aware clients), not just a "type this IP" instruction.
+
+New module `modules/ap-portal.nix` (`nixosModules.apPortal`) runs hostapd + dnsmasq
+on `wlan0`, started by a `nostrix-ap-mode.service` boot-time carrier check on `eth0`.
+It's wired into `images.raspberryPi3`/`images.raspberryPiZero2W` alongside
+`nixosModules.web`, the same way the existing LAN bootstrap mode is — and, like that
+mode, it's never emitted by `nostrix-setup`'s `generate()`, so **no teardown logic was
+needed**: `nixos-rebuild switch` to the real generated config (which doesn't import
+this module) simply stops hostapd/dnsmasq as part of normal activation, the same way
+the web.nix bootstrap → configured transition already works. This was a real
+simplification versus the rough sketch below, which assumed a custom mode-switch
+script would be required.
+
+`cmd/nostrix-setup/serve.go`'s bootstrap branch now also listens on `:80` (reachable
+only where `ap-portal.nix` opens it, on `wlan0`) and answers the known captive-portal
+probe paths (`cmd/nostrix-setup/captive.go`) with a redirect to `/`, the same
+bootstrap form. A gap the original sketch missed: `bootstrap.html` had no WiFi
+SSID/password fields at all (only the day-2 `setup.html` did) — without them, a
+device set up purely through the AP flow would apply its config and then be
+completely unreachable (no ethernet, and `networking.wireless` never enabled). Fixed
+by adding those fields to `bootstrap.html` and parsing them in `handleBootstrap`.
+
+Also added `checks.x86_64-linux.apPortal`, a VM integration test using
+`mac80211_hwsim` to simulate the WiFi radios (same pattern as nixpkgs' own
+`nixos/tests/wpa_supplicant.nix`) — verifies hostapd/dnsmasq come up, a simulated
+client associates and gets a DHCP lease, and the bootstrap UI (including a
+captive-portal probe redirect) is reachable over the AP. One nixpkgs quirk worth
+noting for future VM networking tests in this repo: `qemu-vm.nix` always adds a NIC
+named `eth0` for the VM's own internet access, independent of the test driver's own
+`virtualisation.vlans` — the test has to explicitly force
+`virtualisation.qemu.networkingOptions = lib.mkForce [ ];` to get a node with
+genuinely no ethernet device, matching an unplugged Pi.
+
+**Verification:**
+- `go build ./cmd/nostrix-setup && go vet ./... && go test ./...` — pass. (One
+  pre-existing, unrelated flaky test noticed along the way:
+  `TestHandleSetupPersistsWifi` races `t.TempDir()` cleanup against a background
+  `nixos-rebuild` goroutine from `rebuildAsync`/`applyState`, occasionally failing
+  with "directory not empty" — reproduces on `main` too, not caused by this change,
+  not fixed here.)
+- `nix flake check` — passes, including the new `nixosModules.apPortal` eval.
+- `nix eval` against a scratch flake importing `nostrix.nixosModules.apPortal`
+  confirmed the hostapd SSID, dnsmasq/firewall config, and wlan0 static address all
+  evaluate to the expected values.
+- `nix build .#checks.x86_64-linux.apPortal` — passes.
+- `nix build .#images.raspberryPi3` — still builds with the new module wired in.
+- **Not yet done: real-hardware verification.** Flash a Pi, boot with no ethernet
+  connected, confirm the `nostrix-setup-<hostname>` hotspot appears, connect a phone
+  and confirm the OS's captive-portal prompt actually fires (this can't be verified
+  in a VM), submit the form including WiFi credentials, confirm `nixos-rebuild
+  switch` succeeds, the AP disappears, and the device is reachable on the real WiFi
+  network afterward.
+
 **Update (2026-09-08): the sibling WiFi item is now done, unblocking the full pitch.** "Add
 WiFi configuration to the setup wizard" (above) shipped — `state.WifiSSID`/`WifiPSK`,
 `networking.wireless` emission in `generate()`, and prompts in both the CLI wizard and the web
@@ -242,15 +301,19 @@ channel while the device keeps using ethernet for steady-state operation, which 
 combine for the full pitch (phone-only setup with no ethernet ever, before or after
 configuration), but each should be implementable and useful on its own.
 
-**Open questions, not yet resolved:**
+**Open questions — resolved (2026-09-10), see the implementation summary at the top of
+this item:**
 - Trigger condition for entering AP mode: always when unconfigured, or only when no ethernet
   link is detected (so a plugged-in cable still gets today's LAN-bootstrap behavior unchanged)?
+  → only when no ethernet link is detected.
 - Captive-portal UX: rely on the phone's OS auto-detecting the captive portal and prompting the
   user (needs a detection endpoint mimicking what iOS/Android probe for), or keep it simple for a
   first pass and just tell the user to open a fixed IP in their browser?
+  → real OS captive-portal auto-detection, implemented.
 - Whether `hostapd` config (SSID/passphrase) should be static per-image or randomized/printed on
   first boot somehow — static is simpler but means anyone in WiFi range of an unconfigured device
   can see the setup form until it's locked down.
+  → static, same trust level as the existing temporary root SSH password.
 
 **Changes (rough, needs a real design pass before implementation):**
 - New hardware/base module for `hostapd` + DHCP server, gated on the "unconfigured" trigger

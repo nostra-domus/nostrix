@@ -166,6 +166,14 @@ an optional WiFi SSID/password, emitted as a `networking.wireless` block so the 
 can join a WiFi network afterward — the password is stored in plaintext in the generated
 flake and Nix store, same trust model as the pasted SSH key.
 
+A Pi image can also be set up entirely from a phone browser, no SSH needed, via
+`nostrix-web`'s bootstrap setup form. If the device has no ethernet cable connected
+and hasn't been configured yet, it broadcasts its own setup hotspot
+(`nostrix-setup-<hostname>`, fixed passphrase `nostrix-setup` — same trust level as
+the temporary first-boot SSH password) so the same form can be reached with no LAN at
+all; connecting a phone to it should pop the OS's captive-portal sign-in prompt
+automatically.
+
 ### `lib.mkImage` and `lib.mkSystem`
 
 `lib.mkImage` builds a compressed SD card image (`.img.zst`). It accepts the
