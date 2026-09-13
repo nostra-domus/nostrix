@@ -71,6 +71,7 @@
 
               services.nginx.enable = true;
               networking.firewall.allowedTCPPorts = [ 80 ];
+              services.nostrix-web.hardware = "raspberryPi3";
 
               system.stateVersion = "25.11";
             })
@@ -94,6 +95,7 @@
 
               services.nginx.enable = true;
               networking.firewall.allowedTCPPorts = [ 80 ];
+              services.nostrix-web.hardware = "raspberryPiZero2W";
 
               system.stateVersion = "25.11";
             })
@@ -206,13 +208,10 @@
             enable         = lib.mkOverride 0 true; # qemu-vm.nix force-disables wifi by default
             userControlled = true;
             interfaces     = [ "wlan1" ];
-            networks."nostrix-setup-nostrix-ap-test" = {
-              psk = "nostrix-setup";
-              # Must match ap-portal.nix's authentication.mode = "wpa2-sha256" —
-              # the default authProtocols (plain WPA-PSK/SHA1) never completes
-              # the handshake against a wpa2-sha256-only AP.
-              authProtocols = [ "WPA-PSK-SHA256" ];
-            };
+            # ap-portal.nix uses authentication.mode = "wpa2-sha1" (plain
+            # classic WPA2-PSK), which is the default authProtocols here —
+            # no override needed.
+            networks."nostrix-setup-nostrix-ap-test".psk = "nostrix-setup";
           };
 
           system.autoUpgrade.enable = lib.mkForce false;

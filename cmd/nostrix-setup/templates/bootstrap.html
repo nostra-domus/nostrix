@@ -24,19 +24,22 @@
 <h1>Set up this Nostrix device</h1>
 
 {{if .Rebuilding}}
-  <p class="status-busy">Configuring&hellip; this device is applying its settings now,
-  including its Cloudflare Tunnel. This page may stop responding shortly — if you're on
-  this device's own setup hotspot, your phone will disconnect from it as it shuts down;
-  if you're on the LAN, the page will just stop responding — either way, once it does,
-  use the address you'll receive from Cloudflare Access instead of this page.</p>
+  <p class="status-busy">Configuring&hellip; this device is applying its settings now.
+  This page may stop responding shortly — if you're on this device's own setup hotspot,
+  your phone will disconnect from it as it shuts down; if you're on the LAN, the page
+  will just stop responding — either way, once it does, reconnect to your normal WiFi
+  network (or reload this page over ethernet) to reach the device again. If you set up
+  Cloudflare remote access, use the address you'll receive from Cloudflare Access
+  instead of this page once that's live.</p>
 {{else}}
 
 {{if .LastError}}
   <p class="status-err">{{.LastError}}</p>
 {{end}}
 
-<p>This form is reachable only on your local network, and only until this device is
-configured for the first time.</p>
+<p>This form is reachable on your local network. If you skip Cloudflare remote access
+below, it stays reachable here afterward too, so you can come back and finish that
+part later.</p>
 
 <form method="post" action="/">
   <fieldset>
@@ -47,6 +50,12 @@ configured for the first time.</p>
     <label>SSH public key <small>optional — leave blank to skip SSH access</small>
       <textarea name="sshKey" rows="3" placeholder="ssh-ed25519 AAAA...">{{.State.SSHKey}}</textarea>
     </label>
+    {{if .State.Hardware}}
+    <!-- Already fixed by this image at flash time — not a form field, since
+         a device's hardware can't change and picking a different one here
+         would apply an incompatible profile on the next rebuild. -->
+    <p><strong>Hardware:</strong> {{.State.Hardware}}</p>
+    {{else}}
     <label>Hardware profile
       <select name="hardware">
         <option value="raspberryPi3"      {{if eq .State.Hardware "raspberryPi3"}}selected{{end}}>Raspberry Pi 3</option>
@@ -55,6 +64,7 @@ configured for the first time.</p>
         <option value="genericX86_64"     {{if eq .State.Hardware "genericX86_64"}}selected{{end}}>Generic x86_64</option>
       </select>
     </label>
+    {{end}}
     <label>WiFi SSID
       <small>needed if this device has no ethernet cable connected — otherwise it
       won't be reachable after setup. Leave blank if it's staying on ethernet.</small>
@@ -66,25 +76,27 @@ configured for the first time.</p>
   </fieldset>
 
   <fieldset>
-    <legend>Remote access</legend>
+    <legend>Remote access <small style="font-weight:400">optional — leave this whole section
+    blank to skip for now. This page stays reachable on your local network afterward, so you
+    can come back and fill it in anytime.</small></legend>
     <label>Your email <small>used to allow only you through Cloudflare Access</small>
-      <input type="email" name="ownerEmail" value="{{.State.OwnerEmail}}" required>
+      <input type="email" name="ownerEmail" value="{{.State.OwnerEmail}}">
     </label>
     <label>Cloudflare API token
       <small>scoped to Tunnel:Edit, Access: Apps and Policies:Edit, and DNS:Edit for one zone</small>
-      <input type="password" name="cfAPIToken" required>
+      <input type="password" name="cfAPIToken">
     </label>
     <label>Cloudflare account ID
-      <input type="text" name="cfAccountID" required>
+      <input type="text" name="cfAccountID">
     </label>
     <label>Cloudflare zone ID
-      <input type="text" name="cfZoneID" required>
+      <input type="text" name="cfZoneID">
     </label>
     <label>Base domain <small>e.g. example.com — the device becomes &lt;hostname&gt;.&lt;base domain&gt;</small>
-      <input type="text" name="cfBaseDomain" required>
+      <input type="text" name="cfBaseDomain">
     </label>
     <label>Cloudflare team domain <small>the &lt;team&gt; in &lt;team&gt;.cloudflareaccess.com</small>
-      <input type="text" name="cfTeamDomain" required>
+      <input type="text" name="cfTeamDomain">
     </label>
   </fieldset>
 

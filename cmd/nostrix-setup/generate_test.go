@@ -15,6 +15,24 @@ func TestGenerateOmitsCloudflareWhenUnset(t *testing.T) {
 	}
 }
 
+func TestGenerateIncludesWebWhenCloudflareUnset(t *testing.T) {
+	// The web UI must stay present even without Cloudflare configured —
+	// otherwise a device set up with just hostname/SSH key/WiFi (e.g. via
+	// the AP-portal bootstrap flow) has no way to be reached again to add
+	// Cloudflare, nginx, or apps later, and if no SSH key was given either,
+	// no way to be reached at all.
+	out, err := generate(state{Hostname: "pi-test", Hardware: "raspberryPiZero2W"})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if !strings.Contains(out, "nostrix.nixosModules.web") {
+		t.Errorf("expected nostrix.nixosModules.web even without Cloudflare configured, got:\n%s", out)
+	}
+	if strings.Contains(out, "cloudflareTeamDomain") {
+		t.Errorf("expected no cloudflareTeamDomain override when Cloudflare is unset, got:\n%s", out)
+	}
+}
+
 func TestGenerateIncludesCloudflareWhenSet(t *testing.T) {
 	s := state{
 		Hostname:              "pi-test",

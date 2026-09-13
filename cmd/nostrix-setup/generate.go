@@ -87,10 +87,17 @@ func generate(s state) (string, error) {
 		w("        }\n")
 	}
 
+	// Always include the web UI, even without Cloudflare configured yet: it
+	// then runs in the same LAN-reachable bootstrap mode as a freshly
+	// flashed image (modules/web.nix), so a device set up with just
+	// hostname/SSH key/WiFi can still be revisited later — over its real
+	// network this time — to add Cloudflare, nginx, or apps whenever
+	// that's wanted, rather than requiring another SSH session and a
+	// second nostrix-setup run.
+	w("        nostrix.nixosModules.web\n")
 	if s.CloudflareTunnelToken != "" {
 		w("        nostrix.nixosModules.cloudflared\n")
 		f("        { services.nostrix-cloudflared.tunnelToken = \"%s\"; }\n", escapeNixString(s.CloudflareTunnelToken))
-		w("        nostrix.nixosModules.web\n")
 		f("        { services.nostrix-web.cloudflareTeamDomain = \"%s\"; services.nostrix-web.cloudflareAud = \"%s\"; }\n",
 			escapeNixString(s.CloudflareTeamDomain), escapeNixString(s.CloudflareAud))
 	}

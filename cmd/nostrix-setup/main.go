@@ -115,6 +115,18 @@ func runRebuild(path, action string, upgradeAll bool) (error, string) {
 	}
 	fmt.Printf("Running: nixos-rebuild %s\n\n", strings.Join(args, " "))
 
+	// Resolve to an absolute path rather than relying on PATH lookup inside
+	// whatever runs the command below: a systemd-run transient unit (see
+	// INVOCATION_ID branch) gets a fresh environment with systemd's own
+	// compiled-in default PATH (filesystem tools it needs internally), not
+	// this process's PATH or /run/current-system/sw/bin — nixos-rebuild is
+	// on neither, so a bare "nixos-rebuild" there fails with "Failed to
+	// find executable", confirmed on real hardware.
+	nixosRebuild, err := exec.LookPath("nixos-rebuild")
+	if err != nil {
+		return err, ""
+	}
+
 	var cmd *exec.Cmd
 	if os.Getenv("INVOCATION_ID") != "" {
 		// Running as a systemd service (nostrix-web): this switch can
@@ -123,16 +135,16 @@ func runRebuild(path, action string, upgradeAll bool) (error, string) {
 		// very unit this process runs under partway through. Run
 		// nixos-rebuild in its own transient scope, outside nostrix-web's
 		// cgroup, so that restart doesn't tear down the switch in progress.
-		systemdRunArgs := append([]string{"--collect", "--wait", "--pipe", "nixos-rebuild"}, args...)
+		systemdRunArgs := append([]string{"--collect", "--wait", "--pipe", nixosRebuild}, args...)
 		cmd = exec.Command("systemd-run", systemdRunArgs...)
 	} else {
-		cmd = exec.Command("nixos-rebuild", args...)
+		cmd = exec.Command(nixosRebuild, args...)
 	}
 
 	var captured bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &captured)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &captured)
-	err := cmd.Run()
+	err = cmd.Run()
 	return err, captured.String()
 }
 

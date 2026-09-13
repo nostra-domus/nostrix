@@ -31,6 +31,28 @@ in
     enable = true;
     radios.${wifiIf} = {
       band = "2g";
+      # Fixed channel, not automatic channel selection (the default when
+      # unset): the Pi's brcmfmac driver doesn't support the survey-dump
+      # scan ACS needs, so hostapd crash-loops forever with "ACS: Unable to
+      # collect survey data" on real hardware — confirmed on a real Pi 3.
+      # mac80211_hwsim (the VM test's simulated radio) supports survey data
+      # fine, which is why this only surfaced on hardware, not in CI.
+      channel = 6;
+      # brcmfmac43430 (Pi 3 / Zero 2W's onboard chip) rejects the default
+      # 802.11n HT capability set — "Driver does not support configured HT
+      # capability [SHORT-GI-40]", interface fails to come up at all —
+      # confirmed on real hardware. Throughput doesn't matter for a
+      # provisioning-only portal, so just run plain 802.11g instead of
+      # chasing which HT capability subset each Pi WiFi chip variant
+      # actually supports.
+      wifi4.enable = false;
+      # nixpkgs' hostapd module defaults wifi5 (802.11ac/VHT) to enabled
+      # regardless of band, so even this 2.4GHz-only radio config ends up
+      # with "ieee80211ac=1" in hostapd.conf — nonsensical for a chip with
+      # no 5GHz/VHT hardware at all. Doesn't hurt to keep disabled even
+      # though it turned out not to be the actual cause of the key-install
+      # failure below.
+      wifi5.enable = false;
       networks.${wifiIf} = {
         # Fixed SSID/passphrase — same trust level already accepted for the
         # temporary first-boot root SSH password and bootstrap Basic Auth
@@ -38,15 +60,42 @@ in
         # single-user Pi with no display to surface a random value on.
         ssid = "nostrix-setup-${config.networking.hostName}";
         authentication = {
-          mode            = "wpa2-sha256";
+          # Plain classic WPA2-PSK. wpa2-sha256 was tried first and hit the
+          # same "key setting validation failed" as this mode (see below) —
+          # turned out to be a red herring, since both modes set
+          # ieee80211w=1 identically; wpa2-sha1 is kept as the more widely
+          # compatible baseline regardless.
+          mode            = "wpa2-sha1";
           wpaPasswordFile = pkgs.writeText "nostrix-ap-psk" "nostrix-setup";
         };
+        # brcmfmac43430's old firmware (Pi 3 / Zero 2W) can't install the
+        # IGTK key that Management Frame Protection requires — hostapd's
+        # wpa2-sha1/wpa2-sha256 modes both unconditionally set
+        # ieee80211w=1 ("optional" MFP), which is enough to make the
+        # driver reject key installation outright: "nl80211: kernel
+        # reports: key setting validation failed" / "Could not connect to
+        # kernel driver", confirmed on real hardware — persisted across
+        # both AKM choices and with 802.11n/ac disabled, narrowing it down
+        # to this. MFP doesn't matter for a provisioning-only portal.
+        settings.ieee80211w = lib.mkForce 0;
       };
     };
   };
 
   services.dnsmasq = {
     enable = true;
+    # Without this, NixOS's dnsmasq module makes dnsmasq the system's own
+    # resolver (/etc/resolv.conf -> 127.0.0.1) regardless of the
+    # interface/bind-interfaces restriction below, which only limits which
+    # network interface accepts requests FROM OTHER hosts — it does nothing
+    # to stop this box's own local queries from going through dnsmasq too.
+    # That meant the captive-portal wildcard DNS override (address=/#/...)
+    # hijacked this device's own internet access system-wide, breaking
+    # nixos-rebuild switch's flake fetch (github.com resolved to 10.42.0.1)
+    # for as long as the AP was up — confirmed on real hardware, and it's
+    # exactly what silently broke the first attempt to apply a config from
+    # the AP-only bootstrap flow.
+    resolveLocalQueries = false;
     settings = {
       interface       = wifiIf;
       bind-interfaces = true;
@@ -81,11 +130,16 @@ in
       Type            = "oneshot";
       RemainAfterExit = true;
     };
-    # Retry briefly: right after network-pre.target the NIC may not have
-    # finished physical link negotiation yet even with a cable plugged in.
+    # Retry: right after network-pre.target the NIC may not have finished
+    # physical link negotiation yet even with a cable plugged in. 5 attempts
+    # (5s total) wasn't enough on real hardware — the Pi 3's onboard
+    # ethernet hangs off an internal USB hub (see raspberry-pi-3.nix), which
+    # took longer than that to report carrier after a cold boot, wrongly
+    # triggering AP mode with a cable actually connected. 20s is a
+    # comfortable margin over that while still bounded.
     script = ''
       carrier=0
-      for _ in 1 2 3 4 5; do
+      for _ in $(seq 20); do
         if [ "$(cat /sys/class/net/${ethIf}/carrier 2>/dev/null || echo 0)" = "1" ]; then
           carrier=1
           break

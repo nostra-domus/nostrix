@@ -25,6 +25,13 @@ type server struct {
 	output    string
 	stateFile string
 
+	// hardware is this system's own hardware profile, baked in by the SD
+	// images (services.nostrix-web.hardware in modules/web.nix) — a
+	// device's hardware doesn't change after flashing, so handleBootstrap
+	// uses this instead of asking. Empty for configs not built from one
+	// of those images.
+	hardware string
+
 	mu         sync.Mutex
 	rebuilding bool
 	lastError  string
@@ -43,9 +50,10 @@ func runServe(args []string) {
 	stateFile := fs.String("state", "/etc/nostrix/state.json", "path to the state file")
 	cfTeamDomain := fs.String("cf-team-domain", "", "Cloudflare Access team domain (empty: run in bootstrap mode)")
 	cfAud := fs.String("cf-aud", "", "Cloudflare Access application audience tag (empty: run in bootstrap mode)")
+	hardware := fs.String("hardware", "", "this system's own hardware profile, if baked in by an SD image")
 	fs.Parse(args) //nolint:errcheck
 
-	srv := &server{output: *output, stateFile: *stateFile}
+	srv := &server{output: *output, stateFile: *stateFile, hardware: *hardware}
 	mux := http.NewServeMux()
 
 	// Bootstrap mode: Cloudflare hasn't been configured yet (the state a
@@ -104,9 +112,10 @@ func runServe(args []string) {
 }
 
 // handleBootstrap serves the first-boot setup form (LAN-reachable, behind
-// Basic Auth only) that collects everything needed to both finish
-// configuring this device and provision its Cloudflare Tunnel + Access app,
-// in one step, from a phone browser.
+// Basic Auth only) that finishes configuring this device — hostname, SSH
+// key, WiFi — and optionally provisions its Cloudflare Tunnel + Access app
+// in the same step, all from a phone browser. Cloudflare can be left blank
+// and added later from this same page (see generate()).
 func (srv *server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -114,6 +123,11 @@ func (srv *server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s, _ := loadState(srv.stateFile)
+	// This system's own hardware, if this image baked one in — not a form
+	// field, and not overridden by one: it can't change after flashing.
+	if srv.hardware != "" {
+		s.Hardware = srv.hardware
+	}
 
 	if r.Method != http.MethodPost {
 		srv.render(w, "bootstrap", pageData{State: s})
@@ -127,29 +141,41 @@ func (srv *server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 
 	s.Hostname = strings.TrimSpace(r.FormValue("hostname"))
 	s.SSHKey = strings.TrimSpace(r.FormValue("sshKey"))
-	s.Hardware = r.FormValue("hardware")
+	// Only take hardware from the form when this image didn't already bake
+	// one in — bootstrap.html doesn't render the field at all otherwise.
+	if srv.hardware == "" {
+		s.Hardware = r.FormValue("hardware")
+	}
 	s.OwnerEmail = strings.TrimSpace(r.FormValue("ownerEmail"))
 	s.WifiSSID = strings.TrimSpace(r.FormValue("wifiSSID"))
 	s.WifiPSK = strings.TrimSpace(r.FormValue("wifiPSK"))
 
-	client := newCloudflareClient(strings.TrimSpace(r.FormValue("cfAPIToken")))
-	cfCfg := cloudflareConfig{
-		AccountID:  strings.TrimSpace(r.FormValue("cfAccountID")),
-		ZoneID:     strings.TrimSpace(r.FormValue("cfZoneID")),
-		TeamDomain: strings.TrimSpace(r.FormValue("cfTeamDomain")),
-		BaseDomain: strings.TrimSpace(r.FormValue("cfBaseDomain")),
-		DeviceName: s.Hostname,
-		OwnerEmail: s.OwnerEmail,
-	}
+	// Cloudflare remote access is optional here: leaving the whole section
+	// blank applies just the device basics (hostname/SSH key/WiFi) and
+	// generate() still keeps the web UI running in this same LAN-reachable
+	// bootstrap mode afterward, so remote access can be added later from
+	// this page instead of forcing it into one phone-only session.
+	apiToken := strings.TrimSpace(r.FormValue("cfAPIToken"))
+	if apiToken != "" {
+		client := newCloudflareClient(apiToken)
+		cfCfg := cloudflareConfig{
+			AccountID:  strings.TrimSpace(r.FormValue("cfAccountID")),
+			ZoneID:     strings.TrimSpace(r.FormValue("cfZoneID")),
+			TeamDomain: strings.TrimSpace(r.FormValue("cfTeamDomain")),
+			BaseDomain: strings.TrimSpace(r.FormValue("cfBaseDomain")),
+			DeviceName: s.Hostname,
+			OwnerEmail: s.OwnerEmail,
+		}
 
-	result, err := provisionCloudflare(client, cfCfg)
-	if err != nil {
-		srv.render(w, "bootstrap", pageData{State: s, LastError: "Cloudflare setup failed: " + err.Error()})
-		return
+		result, err := provisionCloudflare(client, cfCfg)
+		if err != nil {
+			srv.render(w, "bootstrap", pageData{State: s, LastError: "Cloudflare setup failed: " + err.Error()})
+			return
+		}
+		s.CloudflareTeamDomain = result.TeamDomain
+		s.CloudflareAud = result.Aud
+		s.CloudflareTunnelToken = result.TunnelToken
 	}
-	s.CloudflareTeamDomain = result.TeamDomain
-	s.CloudflareAud = result.Aud
-	s.CloudflareTunnelToken = result.TunnelToken
 
 	if err := srv.applyState(s); err != nil {
 		srv.render(w, "bootstrap", pageData{State: s, LastError: err.Error()})

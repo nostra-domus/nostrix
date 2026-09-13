@@ -11,6 +11,13 @@
 
   hardware.enableRedistributableFirmware = true;
 
+  # The Pi 3's onboard ethernet hangs off an internal USB hub, so
+  # systemd's predictable naming gives it a USB-topology-based name (e.g.
+  # "enu1u1") instead of "eth0" — confirmed on real hardware. Force classic
+  # kernel-order names so "eth0"/"wlan0" are reliable across boards, since
+  # modules/ap-portal.nix's ethernet carrier check hardcodes "eth0".
+  networking.usePredictableInterfaceNames = false;
+
   boot = {
     # Use extlinux (U-Boot) — no GRUB on the Pi.
     loader.grub.enable                        = false;

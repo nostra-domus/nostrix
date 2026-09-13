@@ -68,6 +68,20 @@ in
         to start without it.
       '';
     };
+
+    hardware = lib.mkOption {
+      type        = lib.types.str;
+      default     = "";
+      description = ''
+        Bare hardware profile name this system is already running (e.g.
+        "raspberryPi3"), set by the SD images in flake.nix. A device's
+        hardware doesn't change after it's flashed, so the bootstrap form
+        uses this instead of asking — both to avoid a redundant question
+        and because picking the wrong one there would apply an
+        incompatible hardware profile on the next rebuild. Left empty for
+        configs not built from one of those images.
+      '';
+    };
   };
 
   config = {
@@ -86,7 +100,8 @@ in
           ${nostrixSetup}/bin/nostrix-setup serve \
             --addr ${if cfg.cloudflareTeamDomain == "" then "0.0.0.0" else "127.0.0.1"}:${toString port} \
             --cf-team-domain ${lib.escapeShellArg cfg.cloudflareTeamDomain} \
-            --cf-aud ${lib.escapeShellArg cfg.cloudflareAud}
+            --cf-aud ${lib.escapeShellArg cfg.cloudflareAud} \
+            --hardware ${lib.escapeShellArg cfg.hardware}
         '';
         Restart = "on-failure";
       };

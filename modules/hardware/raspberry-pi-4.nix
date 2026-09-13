@@ -8,6 +8,11 @@
 
   hardware.enableRedistributableFirmware = true;
 
+  # See raspberry-pi-3.nix: force classic kernel-order interface names for
+  # consistency across Pi boards, since modules/ap-portal.nix's ethernet
+  # carrier check hardcodes "eth0".
+  networking.usePredictableInterfaceNames = false;
+
   boot = {
     # Use extlinux (U-Boot) — no GRUB on the Pi.
     loader.grub.enable                        = false;

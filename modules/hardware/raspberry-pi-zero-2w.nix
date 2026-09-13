@@ -11,6 +11,12 @@
 
   hardware.enableRedistributableFirmware = true;
 
+  # See raspberry-pi-3.nix: systemd's predictable naming can give a wired
+  # interface a USB-topology-based name instead of "eth0" on these boards.
+  # Force classic kernel-order names so "eth0"/"wlan0" are reliable, since
+  # modules/ap-portal.nix's ethernet carrier check hardcodes "eth0".
+  networking.usePredictableInterfaceNames = false;
+
   boot = {
     # Use extlinux (U-Boot) — no GRUB on the Pi.
     loader.grub.enable                         = false;
