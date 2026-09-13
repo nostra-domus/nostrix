@@ -114,5 +114,25 @@ in
   #   bootstrap image has autoUpgrade force-disabled (see flake.nix),
   #   which drops that unit (and its git reference) from ITS OWN closure
   #   entirely, so it's otherwise never pre-cached here.
-  system.extraDependencies = [ pkgs.wpa_supplicant pkgs.git ];
+  # - shellcheck + gcc + go: confirmed on real hardware to be the actual,
+  #   recurring cause of the original "needs to build GHC/glibc from
+  #   source" catastrophe — not (only) documentation.enable, which was a
+  #   real, separate, correctly-fixed issue that happened to overlap.
+  #   NixOS validates generated shell scripts (e.g. firewall-start) with
+  #   ShellCheck (a Haskell program) as a BUILD-TIME-ONLY check — its
+  #   output is never part of any runtime closure and so is never copied
+  #   onto the image, confirmed by its total absence from the actual
+  #   flashed image's /nix/store. Since essentially every switch touches
+  #   at least one such script (config-specific content), every switch
+  #   needs ShellCheck rebuildable-or-fetchable — offline, "rebuildable"
+  #   means bootstrapping the entire GHC toolchain from scratch. gcc and
+  #   go are needed to rebuild nostrix-setup itself whenever its source
+  #   changes (via the git-pull update flow), the same way.
+  system.extraDependencies = [
+    pkgs.wpa_supplicant
+    pkgs.git
+    pkgs.shellcheck
+    pkgs.gcc
+    pkgs.go
+  ];
 }
