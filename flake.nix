@@ -2,12 +2,19 @@
   description = "Nostrix — opinionated NixOS base for self-hosted servers";
 
   inputs = {
-    nixpkgs.url     = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs }:
     let
+      # Systems the setup wizard binary (packages.default/apps.default) is
+      # built for. Hand-rolled instead of flake-utils: the only thing it
+      # bought us was eachDefaultSystem/mkApp for these two outputs, and
+      # dropping it removes an entire input never touched by the
+      # nixosConfigurations evaluation path (the one that matters for an
+      # offline nixos-rebuild switch) — one less thing to reason about there.
+      systems       = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
       # NixOS-only outputs — not per-system.
       nixosOutputs = {
         # The NixOS module. Import this directly for fine-grained control.
@@ -255,20 +262,22 @@
       };
 
       # Per-system outputs: the setup wizard package and app.
-      perSystemOutputs = flake-utils.lib.eachDefaultSystem (system:
-        let
-          pkgs  = nixpkgs.legacyPackages.${system};
-          setup = self.lib.mkSetupPackage { inherit pkgs; };
-        in {
-          # nix build → ./result/bin/nostrix-setup
-          packages.default = setup;
-
-          # nix run github:nostra-domus/nostrix -- (runs nostrix-setup)
-          apps.default = flake-utils.lib.mkApp {
-            drv  = setup;
-            name = "nostrix-setup";
+      perSystemOutputs = {
+        # nix build → ./result/bin/nostrix-setup
+        packages = forAllSystems (system: {
+          default = self.lib.mkSetupPackage {
+            pkgs = nixpkgs.legacyPackages.${system};
           };
         });
+
+        # nix run github:nostra-domus/nostrix -- (runs nostrix-setup)
+        apps = forAllSystems (system: {
+          default = {
+            type    = "app";
+            program = "${self.packages.${system}.default}/bin/nostrix-setup";
+          };
+        });
+      };
     in
     nixosOutputs // perSystemOutputs // {
       checks.x86_64-linux.integration = integrationTest;
