@@ -32,6 +32,19 @@
     allowReboot       = true;
     dates             = "weekly";
     randomizedDelaySec = "45min";  # stagger updates across a fleet
+    # systemd's timer default (persistent = true) fires an immediate
+    # catch-up run the first time this timer is loaded on a system that's
+    # never run it before — which, for the bootstrap image AND (worse)
+    # for the very first activation of a freshly-generated config, is
+    # essentially every device. Confirmed on real hardware, twice: it
+    # landed right in the middle of both the initial WiFi setup and a
+    # follow-up SSH-key submission, and the two nixos-rebuild invocations
+    # then fought over the same Nix build lock, at best slowing things to
+    # a crawl and at worst making the user's own switch fail outright
+    # (with no visible error, since nostrix-web doesn't surface that
+    # yet). A missed weekly run just waits for the next one — not worth
+    # this recurring failure mode on every device's first boot.
+    persistent        = false;
   };
 
   # A device built from one of our own SD images (modules/offline-src.nix)
