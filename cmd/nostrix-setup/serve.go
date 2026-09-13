@@ -130,7 +130,10 @@ func (srv *server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPost {
-		srv.render(w, "bootstrap", pageData{State: s})
+		srv.mu.Lock()
+		data := pageData{State: s, Rebuilding: srv.rebuilding, LastError: srv.lastError}
+		srv.mu.Unlock()
+		srv.render(w, "bootstrap", data)
 		return
 	}
 

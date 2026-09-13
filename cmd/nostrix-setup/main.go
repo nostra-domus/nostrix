@@ -115,16 +115,25 @@ func runRebuild(path, action string, upgradeAll bool) (error, string) {
 	}
 	fmt.Printf("Running: nixos-rebuild %s\n\n", strings.Join(args, " "))
 
-	// Resolve to an absolute path rather than relying on PATH lookup inside
-	// whatever runs the command below: a systemd-run transient unit (see
-	// INVOCATION_ID branch) gets a fresh environment with systemd's own
-	// compiled-in default PATH (filesystem tools it needs internally), not
-	// this process's PATH or /run/current-system/sw/bin — nixos-rebuild is
-	// on neither, so a bare "nixos-rebuild" there fails with "Failed to
-	// find executable", confirmed on real hardware.
-	nixosRebuild, err := exec.LookPath("nixos-rebuild")
-	if err != nil {
-		return err, ""
+	// Use the stable, well-known location rather than a PATH search.
+	// Confirmed on real hardware: nostrix-web's own systemd-assigned PATH
+	// (NixOS's default for a plain service — just
+	// coreutils/findutils/grep/sed/systemd) never includes
+	// /run/current-system/sw/bin, so exec.LookPath("nixos-rebuild") here
+	// failed silently *before* ever reaching the systemd-run branch below
+	// — and since runRebuild's error return was never surfaced anywhere
+	// (not printed, not shown on the bootstrap page — a separate gap),
+	// every switch triggered from the web UI looked like it did nothing
+	// at all, with zero indication why.
+	nixosRebuild := "/run/current-system/sw/bin/nixos-rebuild"
+	if _, statErr := os.Stat(nixosRebuild); statErr != nil {
+		// Fall back to a PATH search for any other context (e.g. a
+		// non-standard NixOS layout) rather than failing outright.
+		p, lookErr := exec.LookPath("nixos-rebuild")
+		if lookErr != nil {
+			return statErr, ""
+		}
+		nixosRebuild = p
 	}
 
 	var cmd *exec.Cmd
@@ -144,7 +153,7 @@ func runRebuild(path, action string, upgradeAll bool) (error, string) {
 	var captured bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &captured)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &captured)
-	err = cmd.Run()
+	err := cmd.Run()
 	return err, captured.String()
 }
 
