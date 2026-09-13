@@ -104,6 +104,19 @@ in
       # OS-specific captive-portal probe domains (connectivitycheck.gstatic.com,
       # captive.apple.com, ...) — the classic captive-portal DNS hijack.
       address         = [ "/#/${apIP}" ];
+      # Since dnsmasq 2.86, a domain matched by --address= for one record
+      # type (here, A — apIP is IPv4-only) has queries for any OTHER
+      # record type forwarded upstream instead of answered locally — see
+      # dnsmasq(8)'s --address= section. With no real upstream on this
+      # AP-only device, every AAAA lookup for every hostname (since the
+      # wildcard matches all of them) hung waiting on a nameserver that
+      # never answers — confirmed on real hardware as "the config page
+      # takes minutes to reply", and almost certainly also what made
+      # Safari's captive-portal browser "take a really long time" earlier
+      # this session. --local= restores the old, pre-2.86 behaviour: an
+      # immediate NoData reply for any non-A query on a --address=-matched
+      # domain, instead of a forward.
+      local           = [ "/#/" ];
       # RFC 8910 captive-portal URI: modern Windows/Android/ChromeOS clients
       # read this straight from the DHCP lease instead of needing to probe.
       dhcp-option     = [ "114,http://${apIP}/" ];

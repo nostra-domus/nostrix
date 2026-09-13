@@ -78,6 +78,20 @@
               services.openssh.settings.PermitRootLogin =
                 lib.mkForce "yes";
 
+              # base.nix's weekly system.autoUpgrade is `persistent = true`
+              # (systemd's default) — on a device that's never run it
+              # before, it fires within randomizedDelaySec of the very
+              # first boot. Confirmed on real hardware: that catch-up run
+              # (nixos-rebuild boot --upgrade-all --refresh) landed WHILE
+              # the user was submitting the bootstrap form, and the two
+              # nixos-rebuild invocations then fought over the same Nix
+              # build lock and CPU, making the device appear to hang for
+              # many minutes ("the config page is really slow"). A
+              # temporary bootstrap config expected to be replaced within
+              # minutes of boot has no business running its own
+              # self-upgrade cycle at all.
+              system.autoUpgrade.enable = lib.mkForce false;
+
               services.nginx.enable = true;
               networking.firewall.allowedTCPPorts = [ 80 ];
               services.nostrix-web.hardware = "raspberryPi3";
@@ -102,6 +116,12 @@
                 lib.mkForce true;
               services.openssh.settings.PermitRootLogin =
                 lib.mkForce "yes";
+
+              # See the matching comment in images.raspberryPi3 above —
+              # confirmed on real hardware that the weekly auto-upgrade's
+              # persistent first-boot catch-up run competes with the
+              # user's own bootstrap-form-triggered switch.
+              system.autoUpgrade.enable = lib.mkForce false;
 
               services.nginx.enable = true;
               networking.firewall.allowedTCPPorts = [ 80 ];
@@ -185,7 +205,7 @@
       apPortalTest = nixpkgs.legacyPackages.x86_64-linux.testers.nixosTest {
         name = "nostrix-ap-portal";
 
-        nodes.machine = { lib, ... }: {
+        nodes.machine = { lib, pkgs, ... }: {
           imports = [
             ./modules/base.nix
             ./modules/web.nix
@@ -224,6 +244,9 @@
             networks."nostrix-setup-nostrix-ap-test".psk = "nostrix-setup";
           };
 
+          # dig, for the DNS-forwarding regression test below.
+          environment.systemPackages = [ pkgs.dnsutils ];
+
           system.autoUpgrade.enable = lib.mkForce false;
           system.stateVersion = "24.05";
         };
@@ -251,6 +274,23 @@
           machine.wait_until_succeeds("ip -4 -o addr show wlan1 | grep -q inet")
           lease = machine.succeed("ip -4 -o addr show wlan1")
           assert "10.42.0." in lease, f"wlan1 did not get a DHCP lease from dnsmasq: {lease}"
+
+          # Wildcard DNS: any hostname's A query resolves to the AP itself.
+          a_answer = machine.succeed(
+              "timeout 5 dig +time=2 +tries=1 +short @10.42.0.1 example.com A"
+          ).strip()
+          assert a_answer == "10.42.0.1", f"wildcard A record didn't resolve to the AP: {a_answer!r}"
+
+          # Regression test: since dnsmasq 2.86, --address= matching a
+          # domain no longer suppresses forwarding for OTHER record types
+          # (see dnsmasq(8)) — an AAAA query here would get forwarded
+          # upstream and hang, since this AP-only device has no real
+          # upstream at all. --local=/#/ in ap-portal.nix restores the old
+          # immediate-NoData behaviour. `timeout 5` makes this fail loudly
+          # instead of just making the whole test suite hang if it
+          # regresses — confirmed on real hardware as multi-minute page
+          # loads before this was fixed.
+          machine.succeed("timeout 5 dig +time=2 +tries=1 @10.42.0.1 example.com AAAA")
 
           machine.wait_for_open_port(8080)
           machine.succeed(

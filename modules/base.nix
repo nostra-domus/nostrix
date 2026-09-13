@@ -43,12 +43,21 @@
   # (e.g. genuinely offline this week): the upgrade still proceeds, it
   # just re-resolves to the same commit as before. No-op (directory
   # missing) on any system that isn't one of our images.
+  #
+  # `timeout 30` bounds the whole thing: this timer is `persistent = true`
+  # (systemd's default), so it fires within randomizedDelaySec of the
+  # very first boot on a brand-new device — which may still be offline
+  # or only AP-connected at that point. Without a hard timeout, `git
+  # fetch` over HTTPS with a broken/absent resolver can hang for minutes
+  # (DNS + TCP connect retries), starving a single-core Pi 3 of CPU and
+  # making everything else on the box — including nostrix-web — feel
+  # unresponsive in the meantime.
   systemd.services.nixos-upgrade.serviceConfig.ExecStartPre =
     let
       refresh = pkgs.writeShellScript "nostrix-refresh-offline-src" ''
         dir=/var/lib/nostrix/nostrix-src
         if [ -d "$dir" ]; then
-          ${pkgs.git}/bin/git -C "$dir" fetch origin
+          ${pkgs.coreutils}/bin/timeout 30 ${pkgs.git}/bin/git -C "$dir" fetch origin
           ${pkgs.git}/bin/git -C "$dir" reset --hard origin/main
         fi
       '';
