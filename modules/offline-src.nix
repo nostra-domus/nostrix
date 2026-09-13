@@ -99,4 +99,20 @@ in
       ${pkgs.coreutils}/bin/chmod -R u+w "${offlineSrcPath}"
     fi
   '';
+
+  # Pre-cache packages the very first real switch needs but this AP-only
+  # bootstrap config itself never uses, so that switch doesn't need
+  # network for them either. Found by diffing the actual flashed image's
+  # /nix/store against a real generated config's full runtime closure:
+  # - wpa_supplicant: the bootstrap image only ever runs hostapd (AP
+  #   mode) — the moment a device joins real WiFi as a client
+  #   (networking.wireless.enable, set by generate() whenever WiFi
+  #   credentials are given), it needs the client supplicant, which was
+  #   never part of the AP-only closure at all.
+  # - git: needed by base.nix's nixos-upgrade ExecStartPre once
+  #   auto-upgrade actually activates on the generated config — the
+  #   bootstrap image has autoUpgrade force-disabled (see flake.nix),
+  #   which drops that unit (and its git reference) from ITS OWN closure
+  #   entirely, so it's otherwise never pre-cached here.
+  system.extraDependencies = [ pkgs.wpa_supplicant pkgs.git ];
 }

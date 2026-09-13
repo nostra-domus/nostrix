@@ -47,6 +47,17 @@
     persistent        = false;
   };
 
+  # NixOS builds the manual (nixos-help, man/info pages) by default, which
+  # pulls in a genuinely large, otherwise-unrelated toolchain (confirmed on
+  # real hardware: a switch that only changed WiFi credentials tried to
+  # build cmake, GHC, and even glibc itself from source, because none of
+  # it was already cached and cache.nixos.org was unreachable at the
+  # time). This isn't proportional to how much config changed — it's a
+  # baseline cost of activating any new generation whose doc-builder
+  # closure isn't already cached, first switch or hundredth. A headless
+  # server appliance has no use for any of this.
+  documentation.enable = false;
+
   # A device built from one of our own SD images (modules/offline-src.nix)
   # references nostrix via a local git clone
   # (/var/lib/nostrix/nostrix-src), not github:nostra-domus/nostrix —
