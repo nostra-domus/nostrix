@@ -39,7 +39,19 @@ func generate(s state) (string, error) {
 	f := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
 
 	w("{\n")
-	w("  inputs.nostrix.url = \"github:nostra-domus/nostrix\";\n")
+	if s.Hardware != "" {
+		// This device was built from one of our own SD images, which bakes
+		// a real, updatable git clone of nostrix onto the device at
+		// modules/offline-src.nix's path — referencing it instead of
+		// github:nostra-domus/nostrix lets the very first nixos-rebuild
+		// switch succeed with zero network, needed for the AP-only,
+		// zero-ethernet flow (a plain `nix run github:...` on someone's
+		// existing system has no such path baked in, and always has
+		// network by the time it runs anyway).
+		w("  inputs.nostrix.url = \"git+file:///var/lib/nostrix/nostrix-src\";\n")
+	} else {
+		w("  inputs.nostrix.url = \"github:nostra-domus/nostrix\";\n")
+	}
 	for _, a := range s.Apps {
 		f("  inputs.%s.url = \"%s\";\n", a.Name, escapeNixString(a.URL))
 	}

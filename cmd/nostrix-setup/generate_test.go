@@ -59,6 +59,40 @@ func TestGenerateIncludesCloudflareWhenSet(t *testing.T) {
 	}
 }
 
+func TestGenerateUsesLocalNostrixInputWhenHardwareSet(t *testing.T) {
+	// Hardware is only ever set by our own SD images (see
+	// services.nostrix-web.hardware), which bake a real, updatable git
+	// clone of nostrix onto the device (modules/offline-src.nix) — the
+	// generated flake must reference that instead of github:, so the very
+	// first nixos-rebuild switch can succeed with zero network.
+	out, err := generate(state{Hostname: "pi-test", Hardware: "raspberryPiZero2W"})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if !strings.Contains(out, `inputs.nostrix.url = "git+file:///var/lib/nostrix/nostrix-src";`) {
+		t.Errorf("expected local git+file nostrix input when Hardware is set, got:\n%s", out)
+	}
+	if strings.Contains(out, "github:nostra-domus/nostrix") {
+		t.Errorf("expected no github: nostrix input when Hardware is set, got:\n%s", out)
+	}
+}
+
+func TestGenerateUsesGithubNostrixInputWhenHardwareUnset(t *testing.T) {
+	// A plain `nix run github:nostra-domus/nostrix` on an existing system
+	// has no baked-in local clone (Hardware is empty) and must keep using
+	// the real github: input.
+	out, err := generate(state{Hostname: "pi-test"})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+	if !strings.Contains(out, `inputs.nostrix.url = "github:nostra-domus/nostrix";`) {
+		t.Errorf("expected github: nostrix input when Hardware is unset, got:\n%s", out)
+	}
+	if strings.Contains(out, "git+file://") {
+		t.Errorf("expected no git+file nostrix input when Hardware is unset, got:\n%s", out)
+	}
+}
+
 func TestGenerateOmitsWifiWhenUnset(t *testing.T) {
 	out, err := generate(state{Hostname: "pi-test", Hardware: "raspberryPiZero2W"})
 	if err != nil {

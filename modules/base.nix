@@ -2,7 +2,7 @@
 #
 # Covers: SSH hardening, firewall, automatic upgrades, Nix store GC.
 # Does not include hardware, mDNS, or addon config — those are separate.
-{ ... }:
+{ pkgs, ... }:
 {
   # SSH: public-key authentication only, no passwords.
   services.openssh = {
@@ -33,6 +33,27 @@
     dates             = "weekly";
     randomizedDelaySec = "45min";  # stagger updates across a fleet
   };
+
+  # A device built from one of our own SD images (modules/offline-src.nix)
+  # references nostrix via a local git clone
+  # (/var/lib/nostrix/nostrix-src), not github:nostra-domus/nostrix —
+  # --upgrade-all above only re-resolves that input to whatever the clone's
+  # current HEAD already is, so without this it would never actually pick
+  # up new nostrix commits. A leading "-" makes failure here non-fatal
+  # (e.g. genuinely offline this week): the upgrade still proceeds, it
+  # just re-resolves to the same commit as before. No-op (directory
+  # missing) on any system that isn't one of our images.
+  systemd.services.nixos-upgrade.serviceConfig.ExecStartPre =
+    let
+      refresh = pkgs.writeShellScript "nostrix-refresh-offline-src" ''
+        dir=/var/lib/nostrix/nostrix-src
+        if [ -d "$dir" ]; then
+          ${pkgs.git}/bin/git -C "$dir" fetch origin
+          ${pkgs.git}/bin/git -C "$dir" reset --hard origin/main
+        fi
+      '';
+    in
+    [ "-${refresh}" ];
 
   # Garbage collect old generations weekly; keep 30 days of history
   # so a bad upgrade can be rolled back.

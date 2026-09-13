@@ -43,8 +43,10 @@
     nixpkgs.lib.nixosSystem {
       inherit system;
       # Modules (e.g. web.nix) build the nostrix-setup package themselves
-      # via self.lib.mkSetupPackage, so they need self in scope.
-      specialArgs = { inherit self; };
+      # via self.lib.mkSetupPackage, so they need self in scope. offline-src.nix
+      # additionally needs the raw nixpkgs flake input (not just the
+      # instantiated pkgs) for its .narHash/.outPath.
+      specialArgs = { inherit self nixpkgs; };
       modules = [
         self.nixosModules.default
         {

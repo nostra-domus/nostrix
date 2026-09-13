@@ -28,6 +28,7 @@
           web         = ./modules/web.nix;
           cloudflared = ./modules/cloudflared.nix;
           apPortal    = ./modules/ap-portal.nix;
+          offlineSrc  = ./modules/offline-src.nix;
         };
 
         # Hardware profiles — pass one in mkSystem's modules list.
@@ -63,6 +64,7 @@
             self.hardware.raspberryPi3
             self.nixosModules.web
             self.nixosModules.apPortal
+            self.nixosModules.offlineSrc
             ({ lib, ... }: {
               # Temporary credentials for first boot only.
               # nostrix-setup will replace these with your SSH key.
@@ -91,6 +93,7 @@
             self.hardware.raspberryPiZero2W
             self.nixosModules.web
             self.nixosModules.apPortal
+            self.nixosModules.offlineSrc
             ({ lib, ... }: {
               # Temporary credentials for first boot only.
               # nostrix-setup will replace these with your SSH key.
