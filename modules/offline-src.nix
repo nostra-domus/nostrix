@@ -128,11 +128,22 @@ in
   #   means bootstrapping the entire GHC toolchain from scratch. gcc and
   #   go are needed to rebuild nostrix-setup itself whenever its source
   #   changes (via the git-pull update flow), the same way.
+  # - config.system.build.nixos-rebuild: nixos-rebuild-ng builds a
+  #   customized copy of itself (a Python tool) from the target flake
+  #   *before* building anything else — confirmed on real hardware this
+  #   alone took ~25 minutes on a Pi 3, before the actual system build
+  #   even started. Confirmed (by evaluating it for both this bootstrap
+  #   config and a real generated one) that it hashes identically either
+  #   way — it's a pure function of the nixpkgs revision, unrelated to
+  #   hostname/WiFi/Cloudflare/app specifics — so pre-building it once
+  #   here means every device's first real switch reuses it directly
+  #   instead of paying that cost too.
   system.extraDependencies = [
     pkgs.wpa_supplicant
     pkgs.git
     pkgs.shellcheck
     pkgs.gcc
     pkgs.go
+    config.system.build.nixos-rebuild
   ];
 }

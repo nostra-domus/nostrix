@@ -62,7 +62,33 @@
   mkSetupPackage = { pkgs }: pkgs.buildGoModule {
     pname       = "nostrix-setup";
     version     = "0.1.0";
-    src         = self;
+    # Scoped to exactly the Go-relevant files, not `src = self` (the whole
+    # flake tree) — confirmed on real hardware this matters a lot, not just
+    # for tidiness: modules/offline-src.nix bakes a copy of this repo onto
+    # every image with a deliberately different flake.lock (relocked to a
+    # local nixpkgs path for offline capability). With `src = self`, that
+    # one-file difference changed this derivation's hash, so the
+    # already-built binary sitting right there on the image could never be
+    # reused — every single switch rebuilt nostrix-setup (and, with no
+    # prior Go build in the store, all of Go's stdlib) from scratch,
+    # ~20 minutes on a Pi 3. Scoping to just what the Go build actually
+    # reads means the offline-src copy's different flake.lock no longer
+    # changes this hash at all, so the switch substitutes/reuses the
+    # already-valid binary directly instead of a real fix a full rebuild
+    # cache could only ever paper over.
+    src =
+      let
+        # self is flake-attrset-typed (string-like via outPath), not a
+        # real Nix `path` — lib.fileset requires actual paths.
+        selfPath = /. + builtins.unsafeDiscardStringContext "${self}";
+      in
+      pkgs.lib.fileset.toSource {
+        root = selfPath;
+        fileset = pkgs.lib.fileset.unions [
+          (selfPath + "/go.mod")
+          (selfPath + "/cmd")
+        ];
+      };
     subPackages = [ "cmd/nostrix-setup" ];
     # No external Go dependencies — stdlib only.
     vendorHash  = null;
