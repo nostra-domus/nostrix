@@ -19,7 +19,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -136,8 +138,10 @@ func runRebuild(path, action string, upgradeAll bool) (error, string) {
 		nixosRebuild = p
 	}
 
+	viaSystemdRun := os.Getenv("INVOCATION_ID") != ""
+
 	var cmd *exec.Cmd
-	if os.Getenv("INVOCATION_ID") != "" {
+	if viaSystemdRun {
 		// Running as a systemd service (nostrix-web): this switch can
 		// change nostrix-web's own unit (e.g. the bootstrap -> configured
 		// transition in modules/web.nix), which makes systemd restart the
@@ -153,9 +157,25 @@ func runRebuild(path, action string, upgradeAll bool) (error, string) {
 		// fails at the very last step trying to shell out to a bare `test`
 		// command it can't find ("[Errno 2] No such file or directory:
 		// 'test'"), after 20+ minutes of otherwise-successful build work.
+		//
+		// Deliberately NOT --pipe: that would connect the transient
+		// scope's stdout/stderr to *this* process's own fds, which live in
+		// nostrix-web.service's cgroup. Confirmed on real hardware: the
+		// switch itself stops nostrix-web.service partway through
+		// activation (it's in the list of units the new generation no
+		// longer needs), which kills this process and closes those fds —
+		// and the next write nixos-rebuild-ng makes to its (now-closed)
+		// stdout gets SIGPIPE, silently killing the switch right after it
+		// stops the old units and before it starts the new ones, leaving
+		// /run/current-system never updated. Routing output to the journal
+		// instead decouples it from this process's lifetime, so the switch
+		// can run to completion whether or not we survive to see it.
 		systemdRunArgs := append(
 			[]string{
-				"--collect", "--wait", "--pipe",
+				"--collect", "--wait",
+				"--unit=" + switchUnitName,
+				"--property=StandardOutput=journal",
+				"--property=StandardError=journal",
 				"--setenv=PATH=/run/wrappers/bin:/run/current-system/sw/bin",
 				nixosRebuild,
 			},
@@ -167,11 +187,38 @@ func runRebuild(path, action string, upgradeAll bool) (error, string) {
 	}
 
 	var captured bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &captured)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &captured)
+	if !viaSystemdRun {
+		cmd.Stdout = io.MultiWriter(os.Stdout, &captured)
+		cmd.Stderr = io.MultiWriter(os.Stderr, &captured)
+	}
+	startedAt := time.Now()
 	err := cmd.Run()
+	if !viaSystemdRun {
+		return err, captured.String()
+	}
+
+	// We only reach here if this process survived the switch — i.e. it
+	// didn't stop nostrix-web.service, which is exactly the case (a
+	// pre-switch check aborting the switch before touching any units)
+	// where apply() needs switchInhibitedMarker out of the output. Pull
+	// just this run's slice of the journal by unit name and start time
+	// rather than relying on stdio we deliberately didn't wire up above.
+	journalOut, jErr := exec.Command("journalctl",
+		"--no-pager", "-o", "cat",
+		"--unit="+switchUnitName,
+		"--since=@"+strconv.FormatInt(startedAt.Unix(), 10),
+	).Output()
+	if jErr == nil {
+		os.Stdout.Write(journalOut)
+		captured.Write(journalOut)
+	}
 	return err, captured.String()
 }
+
+// switchUnitName is the fixed transient-unit name given to the systemd-run
+// scope that runs the actual nixos-rebuild switch/boot, so its journal
+// output can be looked up by name afterwards (see runRebuild).
+const switchUnitName = "nostrix-switch"
 
 func prompt(r *bufio.Reader, label, def string) string {
 	fmt.Printf("%s [%s]: ", label, def)
