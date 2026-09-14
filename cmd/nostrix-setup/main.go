@@ -144,7 +144,23 @@ func runRebuild(path, action string, upgradeAll bool) (error, string) {
 		// very unit this process runs under partway through. Run
 		// nixos-rebuild in its own transient scope, outside nostrix-web's
 		// cgroup, so that restart doesn't tear down the switch in progress.
-		systemdRunArgs := append([]string{"--collect", "--wait", "--pipe", nixosRebuild}, args...)
+		//
+		// --setenv=PATH gives that scope a real NixOS PATH instead of
+		// systemd-run's own compiled-in default (filesystem tools like
+		// zfs/xfsprogs — no coreutils at all). Confirmed on real hardware:
+		// without this, nixos-rebuild-ng's own activation logic — running
+		// inside this same scope, inheriting that same restricted PATH —
+		// fails at the very last step trying to shell out to a bare `test`
+		// command it can't find ("[Errno 2] No such file or directory:
+		// 'test'"), after 20+ minutes of otherwise-successful build work.
+		systemdRunArgs := append(
+			[]string{
+				"--collect", "--wait", "--pipe",
+				"--setenv=PATH=/run/wrappers/bin:/run/current-system/sw/bin",
+				nixosRebuild,
+			},
+			args...,
+		)
 		cmd = exec.Command("systemd-run", systemdRunArgs...)
 	} else {
 		cmd = exec.Command(nixosRebuild, args...)
