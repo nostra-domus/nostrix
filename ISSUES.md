@@ -202,7 +202,8 @@ here; low priority.
 
 ## Ethernet-free first boot via WiFi AP config portal
 
-**Status: implemented (2026-09-10).** The three open questions below are resolved:
+**Status: implemented and verified end-to-end on real hardware (2026-09-16).** The
+three open questions below are resolved:
 AP mode triggers only when no ethernet link is detected at boot (a plugged-in cable
 keeps today's LAN bootstrap mode unchanged); the SSID/passphrase are static
 (`nostrix-setup-<hostname>` / `nostrix-setup`), same trust level as the existing
@@ -327,6 +328,70 @@ this item:**
 connect a phone to it, complete the setup form, confirm the device applies config and becomes
 reachable on the real network afterward (ethernet or WiFi per whatever was configured).
 
+**Follow-up (2026-09-16): real-hardware verification complete, plus five bugs found and fixed
+along the way.** A real Pi 3 completed the full flow end to end: booted with no ethernet, the
+`nostrix-setup-nostrix` hotspot appeared, the bootstrap form was submitted with real WiFi
+credentials, and `nixos-rebuild switch` completed successfully and activated the real generated
+config — confirmed via `/run/current-system` pointing at the new generation and password SSH
+being rejected (the real config's `PasswordAuthentication = false` taking effect). With ethernet
+unplugged, the device was reachable purely over WiFi (ping, SSH, `nostrix-web` all working) —
+the "true zero-ethernet" claim this item was named for, actually demonstrated on hardware for
+the first time.
+
+Getting there took five real-hardware-only bugs, none of which showed up in the VM check
+(`checks.x86_64-linux.apPortal`) or `go test`, since all five are specific to timing, process
+lifetime, or multi-interface conditions a single-NIC VM test can't reproduce:
+
+- **`nostrix-setup`'s Go binary was rebuilt from scratch on every switch.** `lib.nix`'s
+  `mkSetupPackage` used `src = self` (the whole flake tree) — `modules/offline-src.nix`
+  deliberately bakes a copy of this repo onto every image with a relocked `flake.lock` (pointed
+  at the image's own local nixpkgs for offline capability), and that one-file difference changed
+  this derivation's hash, so the already-built binary sitting right there on the image could
+  never be reused. Fixed by scoping `src` to just `go.mod` + `cmd` via `pkgs.lib.fileset.toSource`
+  — confirmed two builds differing only in `flake.lock` now produce an identical derivation hash.
+- **`nixos-rebuild-ng` rebuilding a customized copy of itself, ~25 minutes on a Pi 3, on every
+  device's first switch.** Confirmed by evaluation that this derivation is a pure function of the
+  nixpkgs revision (identical regardless of hostname/WiFi/app specifics), so it's safe to
+  pre-build once and ship on the image. Fixed by adding `config.system.build.nixos-rebuild` to
+  `system.extraDependencies` in `offline-src.nix`.
+- **The switch's `systemd-run` scope inherited systemd's own compiled-in default `PATH`**
+  (filesystem tools, no coreutils at all), which made `nixos-rebuild-ng`'s own activation logic
+  fail shelling out to a bare `test` command at the very last step, after 20+ minutes of
+  otherwise-successful work. Fixed with `--setenv=PATH=/run/wrappers/bin:/run/current-system/sw/bin`
+  in `main.go`'s `runRebuild`.
+- **The switch could kill itself via SIGPIPE right after stopping its own service.** The same
+  `systemd-run` invocation used `--pipe`, wiring the transient switch scope's stdout/stderr to
+  the calling process's own fds — but that process runs inside `nostrix-web.service`, which the
+  switch itself stops partway through activation (it's in the very unit list it just logged).
+  The next write `nixos-rebuild-ng` made to its now-closed stdout got SIGPIPE, silently killing
+  the switch right after it stopped the old units and before it started the new ones —
+  reproduced live, `/run/current-system` never updated and the transient scope vanished with no
+  error anywhere. Fixed by dropping `--pipe` and routing the transient unit's output to the
+  journal under a fixed name instead, decoupling it from this process's lifetime (`main.go`).
+- **Two interfaces on the same subnet broke each other.** Testing surfaced a real product gap,
+  not just a test artifact: with both `eth0` and `wlan0` DHCP'd onto the same subnet (trivially
+  possible after WiFi setup if ethernet is plugged back in for maintenance), Linux's normal
+  destination-only routing sent all reply traffic for that subnet out whichever interface had the
+  lower route metric, silently breaking connections to the other interface's address. Fixed with
+  a new module, `modules/multi-homed-routing.nix` (wired into every Nostrix system, not just
+  AP-portal images) — a `dhcpcd` exit-hook that gives each interface its own routing table and a
+  source-address `ip rule`, so reply traffic always goes back out the interface a connection
+  arrived on regardless of metric. Verified live: with the fix, `eth0` and `wlan0` stayed
+  simultaneously reachable by both ping and SSH.
+
+Separately, but found and fixed while chasing the above on the same device: **weekly
+`system.autoUpgrade` has been a silent no-op on every Nostrix device.** Its
+`flags = [ "--upgrade-all" ]` (see "Add WiFi configuration to the setup wizard" above, and
+`base.nix`) does nothing for a flake-based system — confirmed by reading `nixos-rebuild-ng`'s own
+source, where `--upgrade-all` only ever triggers `nix-channel --update` (classic, non-flake
+NixOS); for flakes it hits an explicit early return that logs a warning and changes nothing.
+Reproduced live: a manual switch with `--upgrade-all`, run well after pushing a new commit and
+refreshing the on-device git clone, silently reactivated the exact same already-locked
+generation. Fixed in `base.nix` by switching to `--recreate-lock-file`, which actually
+regenerates `flake.lock` and re-resolves every input. Not yet reflected on any already-deployed
+device other than the one used for this session's testing — every other device will pick it up
+on its own next scheduled auto-upgrade.
+
 ---
 
 ## Bake `nostrix-setup` into the SD card image
@@ -381,6 +446,18 @@ first-boot → real-config flow work almost entirely offline after the initial i
 `nixos-rebuild switch` after running the wizard with typical answers (same hardware profile,
 nginx enabled) — it should complete with little to no network fetch, versus the current
 from-scratch download.
+
+**Follow-up (2026-09-16): partially addressed, but not via the approach above.** Chasing the
+AP-portal item's real-hardware bottlenecks (see its 2026-09-16 follow-up) led to the same
+`system.extraDependencies` mechanism this item proposes, but scoped narrowly to specific
+packages found to be missing one at a time on real hardware (`wpa_supplicant`, `git`,
+`shellcheck`, `gcc`, `go`, `config.system.build.nixos-rebuild`) rather than the full closure of a
+representative wizard-output config. This got the AP-portal flow's first switch down from
+20+ minutes of from-scratch builds to a normal few-minute switch, but it's a narrower guarantee
+than what's scoped here — a wizard config with a *different* addon combination (nginx, or
+whatever future addons look like) could still hit missing packages this list doesn't cover. The
+general "build a representative target closure and pull the whole thing in" approach above
+remains the more complete fix and is still open.
 
 ---
 
