@@ -25,10 +25,32 @@
   # Automatic upgrades: rebuild from the local /etc/nixos flake weekly,
   # updating all flake inputs (nostrix, nixpkgs, and any app inputs) in one step.
   # The server reboots automatically when needed (e.g. kernel update).
+  #
+  # --recreate-lock-file, not --upgrade-all: confirmed by reading
+  # nixos-rebuild-ng's own source (nixos_rebuild/__init__.py) that
+  # --upgrade-all only ever does anything for classic channel-based NixOS
+  # (it shells out to `nix-channel --update`) — for a flake-based system
+  # like every Nostrix device, it hits an explicit early-return that just
+  # logs "'--upgrade(-all)' flag has no effect for flake-based systems"
+  # and changes nothing. Confirmed on real hardware: a manual
+  # `nixos-rebuild switch --flake /etc/nixos --upgrade-all`, run well
+  # after pushing a real new commit and refreshing the on-device git
+  # clone, silently reactivated the exact same already-locked generation
+  # — meaning every device's weekly auto-upgrade has been doing the same
+  # no-op switch forever, never actually picking up new nostrix or
+  # nixpkgs revisions despite this option's name and this comment's
+  # original claim. --recreate-lock-file is the flag that actually
+  # regenerates flake.lock (equivalent to deleting it and letting
+  # nixos-rebuild recreate it), which is what re-resolves every input —
+  # confirmed on the same device: `nixos-rebuild switch --flake
+  # /etc/nixos` alone reused the stale lock, `nix flake lock
+  # --update-input nostrix /etc/nixos` (recreate-lock-file's underlying
+  # mechanism, scoped to one input) correctly moved it to the new commit
+  # and the following switch built and activated it.
   system.autoUpgrade = {
     enable            = true;
     flake             = "/etc/nixos";
-    flags             = [ "--upgrade-all" ];
+    flags             = [ "--recreate-lock-file" ];
     allowReboot       = true;
     dates             = "weekly";
     randomizedDelaySec = "45min";  # stagger updates across a fleet
