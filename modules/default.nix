@@ -7,5 +7,6 @@
     ./base.nix
     ./mdns.nix
     ./web.nix
+    ./multi-homed-routing.nix
   ];
 }
