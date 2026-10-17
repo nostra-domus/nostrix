@@ -13,6 +13,14 @@ test:
     go test ./...
     go vet ./...
 
+# Sign in to Cloudflare with the cf CLI (browser approval; login lasts ~1h)
+cf-login:
+    env -u LD_LIBRARY_PATH npx --yes cf auth login
+
+# Look up Cloudflare IDs for a domain (cf login or $CLOUDFLARE_API_TOKEN); --create-token mints a device token
+cloudflare domain *args:
+    env -u LD_LIBRARY_PATH NOSTRIX_CF="npx --yes cf" go run ./cmd/nostrix-setup cloudflare --domain {{ domain }} {{ args }}
+
 # --- Checks ---
 
 # Evaluate the example config (smoke test)

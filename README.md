@@ -174,6 +174,32 @@ the temporary first-boot SSH password) so the same form can be reached with no L
 all; connecting a phone to it should pop the OS's captive-portal sign-in prompt
 automatically.
 
+### Preparing Cloudflare values
+
+The wizard and bootstrap form's optional Cloudflare remote access needs an API token,
+account ID, zone ID and team domain. Run this on your own machine (not the device) to look
+the IDs up and check the token's permissions before you start:
+
+```bash
+export CLOUDFLARE_API_TOKEN=...     # or enter it at the prompt
+nix run github:nostra-domus/nostrix -- cloudflare --domain example.com
+```
+
+It prints the values to paste in and reports `ok`/`FAIL` for each permission the
+provisioning step needs (read-only probes; nothing is created). Without a token it prints
+which permissions to grant when creating one. `--json` gives machine-readable output; the
+exit code is non-zero if a check fails.
+
+Instead of making a token by hand, you can use Cloudflare's own
+[`cf` CLI](https://developers.cloudflare.com/cf/) (beta, needs Node ≥ 22.18): run
+`cf auth login` once (browser approval), then run the command above with no
+`CLOUDFLARE_API_TOKEN` set. It finds `cloudflare`/`cf` on `PATH` (or `$NOSTRIX_CF`, e.g.
+`NOSTRIX_CF="npx --yes cf"`) and looks the IDs up through your login. Add `--create-token`
+to also create a token limited to exactly what provisioning needs (this one account + zone,
+expires after `--token-days`, default 7), which is printed once. That creates a real
+credential in your Cloudflare account, so it's opt-in. In this repo's dev shell,
+`just cf-login` then `just cloudflare example.com --create-token` does both.
+
 ### `lib.mkImage` and `lib.mkSystem`
 
 `lib.mkImage` builds a compressed SD card image (`.img.zst`). It accepts the

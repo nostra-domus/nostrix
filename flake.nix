@@ -356,10 +356,11 @@
           };
         });
 
-        # nix develop → shell with just (see ./Justfile), go, and qemu
+        # nix develop → shell with just (see ./Justfile), go, sshpass, and node
+        # (node only to run Cloudflare's `cf` CLI via npx for `just cloudflare`)
         devShells = forAllSystems (system:
           let pkgs = nixpkgs.legacyPackages.${system}; in {
-            default = pkgs.mkShell { packages = [ pkgs.just pkgs.go pkgs.sshpass ]; };
+            default = pkgs.mkShell { packages = [ pkgs.just pkgs.go pkgs.sshpass pkgs.nodejs_22 ]; };
           });
 
         # nix run github:nostra-domus/nostrix -- (runs nostrix-setup)

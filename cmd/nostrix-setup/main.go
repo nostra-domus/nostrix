@@ -33,6 +33,9 @@ func main() {
 		case "serve":
 			runServe(os.Args[2:])
 			return
+		case "cloudflare":
+			runPrep(os.Args[2:])
+			return
 		case "help", "--help", "-h":
 			printUsage()
 			return
@@ -46,6 +49,9 @@ func printUsage() {
 	fmt.Println("  nostrix-setup              — interactive setup wizard")
 	fmt.Println("  nostrix-setup add <url>    — register an app")
 	fmt.Println("  nostrix-setup serve        — run the web configuration UI")
+	fmt.Println("  nostrix-setup cloudflare   — look up Cloudflare IDs and check API token permissions")
+	fmt.Println("                               (--domain example.com, --json; uses $CLOUDFLARE_API_TOKEN, else the")
+	fmt.Println("                               cf CLI's login — add --create-token to mint a scoped token)")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  --output   path to flake.nix  (default: /etc/nixos/flake.nix)")
