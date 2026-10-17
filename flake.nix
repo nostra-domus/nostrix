@@ -132,6 +132,49 @@
           ];
         };
 
+        # x86_64 QEMU VM mirroring the Pi images' first-boot state, for manual
+        # testing without hardware (bootstrap web UI, root/nostrix SSH).
+        #
+        # Build: nix build .#nixosConfigurations.vm.config.system.build.vm
+        # Run:   ./result/bin/run-nostrix-vm  (disk: ./nostrix.qcow2, delete to reset)
+        # Web:  http://localhost:8080  (Basic Auth root / nostrix)
+        # SSH:  ssh -p 2222 root@localhost  (password: nostrix)
+        # Serial console is on the terminal; exit with Ctrl-A X.
+        nixosConfigurations.vm = self.lib.mkSystem {
+          hostname = "nostrix";
+          system   = "x86_64-linux";
+          modules  = [
+            self.nixosModules.web
+            self.nixosModules.offlineSrc
+            ({ lib, modulesPath, ... }: {
+              imports = [ "${modulesPath}/virtualisation/qemu-vm.nix" ];
+
+              users.users.root.password = "nostrix";
+              services.openssh.settings.PasswordAuthentication = lib.mkForce true;
+              services.openssh.settings.PermitRootLogin = lib.mkForce "yes";
+              system.autoUpgrade.enable = lib.mkForce false;
+
+              services.nginx.enable = true;
+              networking.firewall.allowedTCPPorts = [ 80 ];
+              services.nostrix-web.hardware = "genericX86_64";
+
+              virtualisation = {
+                memorySize = 2048;
+                cores      = 2;
+                diskSize   = 8192;
+                graphics   = false;
+                forwardPorts = [
+                  { from = "host"; host.port = 2222; guest.port = 22; }
+                  { from = "host"; host.port = 8080; guest.port = 8080; }
+                  { from = "host"; host.port = 8081; guest.port = 80; }
+                ];
+              };
+
+              system.stateVersion = "25.11";
+            })
+          ];
+        };
+
         # Example configuration — verifies the module evaluates cleanly.
         # nix eval .#nixosConfigurations.example.config.networking.hostName
         nixosConfigurations.example = self.lib.mkSystem {
@@ -312,6 +355,12 @@
             pkgs = nixpkgs.legacyPackages.${system};
           };
         });
+
+        # nix develop → shell with just (see ./Justfile), go, and qemu
+        devShells = forAllSystems (system:
+          let pkgs = nixpkgs.legacyPackages.${system}; in {
+            default = pkgs.mkShell { packages = [ pkgs.just pkgs.go pkgs.sshpass ]; };
+          });
 
         # nix run github:nostra-domus/nostrix -- (runs nostrix-setup)
         apps = forAllSystems (system: {
