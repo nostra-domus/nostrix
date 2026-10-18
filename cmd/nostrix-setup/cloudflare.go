@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -112,8 +113,8 @@ func (c *cloudflareClient) setTunnelIngress(accountID, tunnelID, hostname string
 	body := map[string]any{
 		"config": map[string]any{
 			"ingress": []map[string]any{
-				{"hostname": hostname, "service": "http://127.0.0.1:8080"},
-				{"service": "http_status:404"},
+				{"hostname": hostname, "service": tunnelOriginService},
+				{"service": tunnelCatchAll},
 			},
 		},
 	}
@@ -149,17 +150,180 @@ func (c *cloudflareClient) createAccessApp(accountID, name, hostname string) (ap
 	return result.ID, result.Aud, nil
 }
 
-func (c *cloudflareClient) createAccessPolicy(accountID, appID, email string) error {
-	body := map[string]any{
-		"name":     "device owner",
+const (
+	tunnelOriginService = "http://127.0.0.1:8080"
+	tunnelCatchAll      = "http_status:404"
+	accessPolicyName    = "device owner"
+)
+
+func accessPolicyBody(email string) map[string]any {
+	return map[string]any{
+		"name":     accessPolicyName,
 		"decision": "allow",
 		"include":  []map[string]any{{"email": map[string]string{"email": email}}},
 	}
+}
+
+func (c *cloudflareClient) createAccessPolicy(accountID, appID, email string) error {
 	path := fmt.Sprintf("/accounts/%s/access/apps/%s/policies", accountID, appID)
-	if err := c.do(http.MethodPost, path, body, nil); err != nil {
+	if err := c.do(http.MethodPost, path, accessPolicyBody(email), nil); err != nil {
 		return fmt.Errorf("creating access policy: %w", err)
 	}
 	return nil
+}
+
+// The ensure* helpers below make provisioning safe to run again. The form
+// provisions Cloudflare *before* the on-device switch, so a failed switch
+// (or a mistyped field) means the next attempt finds the previous attempt's
+// leftovers. Each helper reuses a resource only when it is provably ours —
+// i.e. exactly what an earlier run would have produced — and otherwise
+// refuses, because the account may hold unrelated resources with the same
+// name (a real device called "arne-pc" must never get its routing replaced
+// just because someone typed that hostname).
+
+// tunnelIngress returns the routing rules of a remotely-managed tunnel.
+func (c *cloudflareClient) tunnelIngress(accountID, tunnelID string) ([]struct{ Hostname, Service string }, error) {
+	var cfg struct {
+		Config struct {
+			Ingress []struct {
+				Hostname string `json:"hostname"`
+				Service  string `json:"service"`
+			} `json:"ingress"`
+		} `json:"config"`
+	}
+	path := fmt.Sprintf("/accounts/%s/cfd_tunnel/%s/configurations", accountID, tunnelID)
+	if err := c.do(http.MethodGet, path, nil, &cfg); err != nil {
+		return nil, fmt.Errorf("reading tunnel config: %w", err)
+	}
+	var rules []struct{ Hostname, Service string }
+	for _, r := range cfg.Config.Ingress {
+		rules = append(rules, struct{ Hostname, Service string }{r.Hostname, r.Service})
+	}
+	return rules, nil
+}
+
+// ingressIsOurs reports whether a tunnel's routing is empty (created by an
+// earlier run that failed before configuring it) or exactly what
+// setTunnelIngress writes for hostname.
+func ingressIsOurs(rules []struct{ Hostname, Service string }, hostname string) bool {
+	switch len(rules) {
+	case 0:
+		return true
+	case 2:
+		return rules[0].Hostname == hostname && rules[0].Service == tunnelOriginService &&
+			rules[1].Hostname == "" && rules[1].Service == tunnelCatchAll
+	}
+	return false
+}
+
+// ensureTunnel returns the ID of this device's tunnel, creating it unless
+// an earlier run already did.
+func (c *cloudflareClient) ensureTunnel(accountID, name, hostname string) (id string, reused bool, err error) {
+	var tunnels []struct {
+		ID        string  `json:"id"`
+		Name      string  `json:"name"`
+		ConfigSrc string  `json:"config_src"`
+		DeletedAt *string `json:"deleted_at"`
+	}
+	path := fmt.Sprintf("/accounts/%s/cfd_tunnel?is_deleted=false&name=%s", accountID, url.QueryEscape(name))
+	if err := c.do(http.MethodGet, path, nil, &tunnels); err != nil {
+		return "", false, fmt.Errorf("looking up tunnel: %w", err)
+	}
+	for _, t := range tunnels {
+		if t.Name != name || t.DeletedAt != nil {
+			continue
+		}
+		if t.ConfigSrc != "cloudflare" {
+			return "", false, fmt.Errorf("a locally-managed tunnel named %q already exists; choose a different hostname or delete it", name)
+		}
+		rules, err := c.tunnelIngress(accountID, t.ID)
+		if err != nil {
+			return "", false, err
+		}
+		if !ingressIsOurs(rules, hostname) {
+			return "", false, fmt.Errorf("a tunnel named %q already exists and routes other traffic; choose a different hostname or delete it", name)
+		}
+		return t.ID, true, nil
+	}
+	id, err = c.createTunnel(accountID, name)
+	return id, false, err
+}
+
+// ensureDNSRecord creates the CNAME to the tunnel unless it already exists.
+// A record with this name that points anywhere else is never touched.
+func (c *cloudflareClient) ensureDNSRecord(zoneID, hostname, target string) (reused bool, err error) {
+	var records []struct {
+		Type    string `json:"type"`
+		Content string `json:"content"`
+	}
+	path := fmt.Sprintf("/zones/%s/dns_records?name=%s", zoneID, url.QueryEscape(hostname))
+	if err := c.do(http.MethodGet, path, nil, &records); err != nil {
+		return false, fmt.Errorf("looking up DNS record: %w", err)
+	}
+	for _, r := range records {
+		if r.Type == "CNAME" && r.Content == target {
+			return true, nil
+		}
+		return false, fmt.Errorf("DNS record %s already exists (%s → %s); delete it or choose a different hostname", hostname, r.Type, r.Content)
+	}
+	return false, c.createDNSRecord(zoneID, hostname, target)
+}
+
+// ensureAccessApp returns the Access application for hostname, creating it
+// unless an earlier run already did. An app on that hostname under a
+// different name is someone else's and is left alone.
+func (c *cloudflareClient) ensureAccessApp(accountID, name, hostname string) (appID, aud string, reused bool, err error) {
+	const perPage = 100
+	for page := 1; page <= 50; page++ {
+		var apps []struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Domain string `json:"domain"`
+			Type   string `json:"type"`
+			Aud    string `json:"aud"`
+		}
+		path := fmt.Sprintf("/accounts/%s/access/apps?page=%d&per_page=%d", accountID, page, perPage)
+		if err := c.do(http.MethodGet, path, nil, &apps); err != nil {
+			return "", "", false, fmt.Errorf("looking up access app: %w", err)
+		}
+		for _, a := range apps {
+			if a.Domain != hostname {
+				continue
+			}
+			if a.Name == name && a.Type == "self_hosted" {
+				return a.ID, a.Aud, true, nil
+			}
+			return "", "", false, fmt.Errorf("an Access application %q already protects %s; delete it or choose a different hostname", a.Name, hostname)
+		}
+		if len(apps) < perPage {
+			break
+		}
+	}
+	appID, aud, err = c.createAccessApp(accountID, name, hostname)
+	return appID, aud, false, err
+}
+
+// ensureAccessPolicy makes the app's "device owner" policy allow exactly
+// email: it updates an existing one in place (so a corrected email on a
+// retry takes effect) or creates it.
+func (c *cloudflareClient) ensureAccessPolicy(accountID, appID, email string) (reused bool, err error) {
+	var policies []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	path := fmt.Sprintf("/accounts/%s/access/apps/%s/policies", accountID, appID)
+	if err := c.do(http.MethodGet, path, nil, &policies); err != nil {
+		return false, fmt.Errorf("looking up access policy: %w", err)
+	}
+	for _, p := range policies {
+		if p.Name == accessPolicyName {
+			if err := c.do(http.MethodPut, path+"/"+p.ID, accessPolicyBody(email), nil); err != nil {
+				return false, fmt.Errorf("updating access policy: %w", err)
+			}
+			return true, nil
+		}
+	}
+	return false, c.createAccessPolicy(accountID, appID, email)
 }
 
 // cloudflareConfig holds the inputs needed to provision one device's
@@ -179,20 +343,35 @@ type cloudflareResult struct {
 	TeamDomain  string
 	Aud         string
 	TunnelToken string
+	// Reused names the resources that an earlier attempt had already
+	// created and this run picked up instead of creating again.
+	Reused []string
 }
 
-// provisionCloudflare creates a tunnel for cfg.DeviceName, routes
-// <DeviceName>.<BaseDomain> to it, and creates an Access application +
-// policy allowing only cfg.OwnerEmail. The caller's API token (via c) is
-// used only for these calls — nothing here persists it; only the narrower
-// tunnel token in the returned cloudflareResult is meant to be kept.
+// provisionCloudflare makes sure a tunnel for cfg.DeviceName exists, routes
+// <DeviceName>.<BaseDomain> to it, and that an Access application + policy
+// allow only cfg.OwnerEmail. The caller's API token (via c) is used only
+// for these calls — nothing here persists it; only the narrower tunnel
+// token in the returned cloudflareResult is meant to be kept.
+//
+// It is safe to run again after a partial failure or a failed on-device
+// switch: resources from the earlier attempt are reused when they are
+// provably ours (see the ensure* helpers) and the run fails loudly,
+// touching nothing, when a same-named resource belongs to something else.
 func provisionCloudflare(c *cloudflareClient, cfg cloudflareConfig) (cloudflareResult, error) {
 	hostname := cfg.DeviceName + "." + cfg.BaseDomain
+	var reused []string
+	note := func(was bool, what string) {
+		if was {
+			reused = append(reused, what)
+		}
+	}
 
-	tunnelID, err := c.createTunnel(cfg.AccountID, cfg.DeviceName)
+	tunnelID, was, err := c.ensureTunnel(cfg.AccountID, cfg.DeviceName, hostname)
 	if err != nil {
 		return cloudflareResult{}, err
 	}
+	note(was, "tunnel")
 	token, err := c.tunnelToken(cfg.AccountID, tunnelID)
 	if err != nil {
 		return cloudflareResult{}, err
@@ -200,21 +379,27 @@ func provisionCloudflare(c *cloudflareClient, cfg cloudflareConfig) (cloudflareR
 	if err := c.setTunnelIngress(cfg.AccountID, tunnelID, hostname); err != nil {
 		return cloudflareResult{}, err
 	}
-	if err := c.createDNSRecord(cfg.ZoneID, hostname, tunnelID+".cfargotunnel.com"); err != nil {
-		return cloudflareResult{}, err
-	}
-	appID, aud, err := c.createAccessApp(cfg.AccountID, cfg.DeviceName, hostname)
+	was, err = c.ensureDNSRecord(cfg.ZoneID, hostname, tunnelID+".cfargotunnel.com")
 	if err != nil {
 		return cloudflareResult{}, err
 	}
-	if err := c.createAccessPolicy(cfg.AccountID, appID, cfg.OwnerEmail); err != nil {
+	note(was, "DNS record")
+	appID, aud, was, err := c.ensureAccessApp(cfg.AccountID, cfg.DeviceName, hostname)
+	if err != nil {
 		return cloudflareResult{}, err
 	}
+	note(was, "Access application")
+	was, err = c.ensureAccessPolicy(cfg.AccountID, appID, cfg.OwnerEmail)
+	if err != nil {
+		return cloudflareResult{}, err
+	}
+	note(was, "Access policy")
 
 	return cloudflareResult{
 		Hostname:    hostname,
 		TeamDomain:  cfg.TeamDomain,
 		Aud:         aud,
 		TunnelToken: token,
+		Reused:      reused,
 	}, nil
 }

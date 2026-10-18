@@ -128,6 +128,9 @@ func promptCloudflare(r *bufio.Reader, s *state) error {
 	s.CloudflareTeamDomain = result.TeamDomain
 	s.CloudflareAud = result.Aud
 	s.CloudflareTunnelToken = result.TunnelToken
+	if len(result.Reused) > 0 {
+		fmt.Printf("Reused from an earlier attempt: %s\n", strings.Join(result.Reused, ", "))
+	}
 	fmt.Printf("Done — device will be reachable at https://%s\n", result.Hostname)
 	return nil
 }

@@ -421,11 +421,19 @@ shared `apply()`).
   with the Cloudflare Access login redirect.
 
 **Open follow-ups from this work:**
-- **Provisioning isn't retry-safe (untested).** `handleBootstrap` provisions Cloudflare *before*
-  the switch. If the switch then fails, the tunnel, DNS record and Access app are left behind
-  (this happened once and was cleaned up by hand). Whether re-submitting the form collides with
-  those leftovers is untested; it should either be idempotent (look up by name first) or clean up
-  after itself on failure.
+- ~~**Provisioning isn't retry-safe.**~~ **Fixed (2026-10-18).** `handleBootstrap` provisions
+  Cloudflare *before* the switch, so a failed switch used to leave the tunnel, DNS record and
+  Access app behind (cleaned up by hand once). `provisionCloudflare` is now find-or-create per
+  step (`ensureTunnel`/`ensureDNSRecord`/`ensureAccessApp`/`ensureAccessPolicy`): a retry reuses
+  what an earlier run made, and a corrected owner email updates the existing policy. Reuse is
+  deliberately strict — a resource is taken over only if it is provably ours (a tunnel with
+  empty routing or exactly our one-hostname routing; a CNAME to *this* tunnel; an Access app of
+  the same name on the same hostname). Anything else with the same name/hostname (e.g. a real
+  tunnel called `arne-pc`) fails the run with a clear message and is never modified. Covered by
+  stateful-fake tests (`cloudflare_test.go`). Not exercised against a live account yet, and a
+  stale DNS record pointing at a *deleted* tunnel still has to be removed by hand (we refuse to
+  re-point a record we can't prove is ours). Only the CLI wizard reports what was reused; the
+  web UI doesn't surface it.
 - **Account-owned tokens unverified.** The account-token path in `mintScopedToken` is covered by
   unit tests and `--dry-run` syntax checks only; whether a given `cf` login is allowed to create
   account tokens, and that the response carries the secret in `value`, hasn't been seen live. The
