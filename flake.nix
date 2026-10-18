@@ -159,9 +159,13 @@
               services.nostrix-web.hardware = "qemuVM";
 
               virtualisation = {
-                memorySize = 2048;
+                memorySize = 3072;
                 cores      = 2;
-                diskSize   = 8192;
+                diskSize   = 20480;
+                # Packages installed from the Apps page land in the store's writable layer. By default
+                # that layer is a tmpfs (half of RAM), which a big closure such as Jellyfin's fills,
+                # ending in the OOM killer. Keep it on the disk instead.
+                writableStoreUseTmpfs = false;
                 forwardPorts = [
                   { from = "host"; host.port = 2222; guest.port = 22; }
                   { from = "host"; host.port = 8080; guest.port = 8080; }
