@@ -91,6 +91,11 @@ in
     networking.firewall.allowedTCPPorts =
       lib.optional (cfg.cloudflareTeamDomain == "") port;
 
+    # The same binary the service runs, on every user's PATH: the SSH wizard
+    # (`nostrix-setup`) and `nostrix-setup add` need no `nix run` and no
+    # network, and it costs nothing extra — it's already in the closure.
+    environment.systemPackages = [ nostrixSetup ];
+
     systemd.services.nostrix-web = {
       description = "Nostrix web configuration UI";
       wantedBy    = [ "multi-user.target" ];

@@ -160,8 +160,10 @@ in
 
 ### Setup wizard
 
-`nostrix-setup` is an interactive wizard (`nix run github:nostra-domus/nostrix`) that
-prompts for hostname, SSH key, hardware profile, and addons, then generates and applies
+`nostrix-setup` is an interactive wizard (`nix run github:nostra-domus/nostrix` anywhere
+Nix is installed; already on the `PATH` of any system that includes `nixosModules.web`,
+including the pre-built images, so over the first-boot SSH session just run
+`nostrix-setup`) that prompts for hostname, SSH key, hardware profile, and addons, then generates and applies
 `/etc/nixos/flake.nix`. Ethernet is required for this initial run. Among the prompts is
 an optional WiFi SSID/password, emitted as a `networking.wireless` block so the device
 can join a WiFi network afterward — the password is stored in plaintext in the generated

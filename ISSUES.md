@@ -452,9 +452,14 @@ shared `apply()`).
 
 ## Bake `nostrix-setup` into the SD card image
 
-**Status: open.** Re-checked 2026-10-18: no `environment.systemPackages` entry for
-`nostrix-setup` anywhere, so the SSH wizard still needs `nix run` on first boot (the phone
-bootstrap form doesn't, since `nostrix-web` runs it as a service by store path).
+**Status: done (2026-10-18).** `modules/web.nix` now adds the `nostrix-setup` package it
+already builds for the service to `environment.systemPackages`, so every system that includes
+`nixosModules.web` — both Pi images, the test VM, and any generated config — has it on `PATH`
+with no `nix run` and no network, at no extra closure cost. (Put in `web.nix` rather than the
+image blocks proposed below because the generated flake imports `web` too, so `nostrix-setup
+add` also works on a configured device.) Verified by building the VM's `system.path`
+(`bin/nostrix-setup` present and runs) and evaluating both Pi images; not yet seen on a
+flashed device. The original write-up follows.
 
 **Context:** Found while getting a live Pi 3 running (2026-09-01). Today, first boot requires
 `nix run --extra-experimental-features "nix-command flakes" github:nostra-domus/nostrix` over
