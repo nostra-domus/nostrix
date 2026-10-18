@@ -20,7 +20,8 @@ type prepResult struct {
 	ZoneID      string      `json:"zoneID"`
 	BaseDomain  string      `json:"baseDomain"`
 	TeamDomain  string      `json:"teamDomain,omitempty"`
-	APIToken    string      `json:"apiToken,omitempty"` // only when --create-token minted one
+	APIToken    string      `json:"apiToken,omitempty"`  // only when --create-token minted one
+	TokenKind   string      `json:"tokenKind,omitempty"` // "account" or "user"
 	Checks      []prepCheck `json:"checks"`
 }
 
@@ -137,7 +138,7 @@ func runPrep(args []string) {
 		if err == nil && *createToken {
 			name := fmt.Sprintf("nostrix-%s-%s", *domain, time.Now().Format("20060102"))
 			expires := time.Now().Add(time.Duration(*tokenDays) * 24 * time.Hour)
-			if res.APIToken, err = mintScopedToken(run, res, name, expires); err == nil {
+			if res.APIToken, res.TokenKind, err = mintScopedToken(run, res, name, expires); err == nil {
 				// Verify the fresh token really has what provisioning needs.
 				if checked, cerr := prepareCloudflare(newCloudflareClient(res.APIToken), *domain); cerr == nil {
 					res.Checks = checked.Checks
@@ -191,8 +192,8 @@ func printPrep(res prepResult) {
 	}
 	if res.APIToken != "" {
 		fmt.Printf("  Cloudflare API token  : %s\n", res.APIToken)
-		fmt.Println("                          (shown once — it can't be retrieved later; scoped to this")
-		fmt.Println("                          account + zone, with an expiry. Treat it like a password.)")
+		fmt.Printf("                          (%s-owned; shown once — it can't be retrieved later; scoped to\n", res.TokenKind)
+		fmt.Println("                          this account + zone, with an expiry. Treat it like a password.)")
 	}
 	if len(res.Checks) > 0 {
 		fmt.Println()

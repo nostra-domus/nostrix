@@ -31,10 +31,13 @@ func (f *fakeCF) run(env []string, args ...string) ([]byte, error) {
 		return []byte(`[{"id":"zone1","name":"example.com","account":{"id":"acct1","name":"My Account"}}]`), nil
 	case strings.HasPrefix(cmd, "zero-trust organization get"):
 		return []byte(`{"auth_domain":"myteam.cloudflareaccess.com"}`), nil
-	case strings.HasPrefix(cmd, "user tokens permission-groups list"):
+	case strings.HasPrefix(cmd, "accounts tokens permission-groups list"),
+		strings.HasPrefix(cmd, "user tokens permission-groups list"):
 		return []byte(f.groups), nil
+	case strings.HasPrefix(cmd, "accounts tokens create"):
+		return []byte(`{"id":"tok-acct","value":"account-secret"}`), nil
 	case strings.HasPrefix(cmd, "user tokens create"):
-		return []byte(`{"id":"tok1","value":"secret-token"}`), nil
+		return []byte(`{"id":"tok-user","value":"user-secret"}`), nil
 	}
 	return nil, fmt.Errorf("unexpected cf command: %s", cmd)
 }
@@ -78,17 +81,20 @@ func TestPrepareViaCFMissingOrgIsNotFatal(t *testing.T) {
 func TestMintScopedTokenBuildsScopedPolicies(t *testing.T) {
 	f := &fakeCF{groups: testGroups}
 	res := prepResult{AccountID: "acct1", ZoneID: "zone1"}
-	tok, err := mintScopedToken(f.run, res, "nostrix-test", time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC))
+	tok, kind, err := mintScopedToken(f.run, res, "nostrix-test", time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("mintScopedToken: %v", err)
 	}
-	if tok != "secret-token" {
-		t.Errorf("token = %q", tok)
+	if tok != "account-secret" || kind != "account" {
+		t.Errorf("token = %q kind = %q, want the account-owned token", tok, kind)
 	}
 
 	var create string
 	for _, c := range f.calls {
-		if strings.HasPrefix(c, "user tokens create") {
+		if strings.HasPrefix(c, "user tokens") {
+			t.Errorf("must not touch user tokens when the account path works: %s", c)
+		}
+		if strings.HasPrefix(c, "accounts tokens create") {
 			create = c
 		}
 	}
@@ -134,12 +140,43 @@ func TestMintScopedTokenBuildsScopedPolicies(t *testing.T) {
 
 func TestMintScopedTokenMissingGroupFailsBeforeCreating(t *testing.T) {
 	f := &fakeCF{groups: `[{"id":"x","name":"Zone Read","scopes":["com.cloudflare.api.account.zone"]}]`}
-	if _, err := mintScopedToken(f.run, prepResult{AccountID: "a", ZoneID: "z"}, "n", time.Now()); err == nil {
+	if _, _, err := mintScopedToken(f.run, prepResult{AccountID: "a", ZoneID: "z"}, "n", time.Now()); err == nil {
 		t.Fatal("expected an error when required permission groups are missing")
 	}
 	for _, c := range f.calls {
-		if strings.HasPrefix(c, "user tokens create") {
-			t.Error("must not create a token when the permission set can't be resolved")
+		if strings.Contains(c, "tokens create") {
+			t.Errorf("must not create any token when the permission set can't be resolved: %s", c)
+		}
+	}
+}
+
+func TestMintScopedTokenFallsBackToUserToken(t *testing.T) {
+	f := &fakeCF{groups: testGroups, fail: map[string]bool{"accounts tokens": true}}
+	tok, kind, err := mintScopedToken(f.run, prepResult{AccountID: "acct1", ZoneID: "zone1"}, "n", time.Now())
+	if err != nil {
+		t.Fatalf("mintScopedToken: %v", err)
+	}
+	if tok != "user-secret" || kind != "user" {
+		t.Errorf("token = %q kind = %q, want the user-owned fallback", tok, kind)
+	}
+}
+
+func TestMintScopedTokenBothFail(t *testing.T) {
+	f := &fakeCF{groups: testGroups, fail: map[string]bool{"accounts tokens": true, "user tokens": true}}
+	if _, _, err := mintScopedToken(f.run, prepResult{AccountID: "acct1", ZoneID: "zone1"}, "n", time.Now()); err == nil {
+		t.Fatal("expected an error when neither token type can be created")
+	}
+}
+
+// The account endpoints read the account from the environment.
+func TestMintScopedTokenPinsTheAccount(t *testing.T) {
+	f := &fakeCF{groups: testGroups}
+	if _, _, err := mintScopedToken(f.run, prepResult{AccountID: "acct1", ZoneID: "zone1"}, "n", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for i, c := range f.calls {
+		if strings.HasPrefix(c, "accounts tokens") && (len(f.envs[i]) != 1 || f.envs[i][0] != "CLOUDFLARE_ACCOUNT_ID=acct1") {
+			t.Errorf("%q ran with env %v, want CLOUDFLARE_ACCOUNT_ID=acct1", c, f.envs[i])
 		}
 	}
 }

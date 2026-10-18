@@ -196,7 +196,7 @@ Instead of making a token by hand, you can use Cloudflare's own
 `cf auth login` once (browser approval), then run the command above with no
 `CLOUDFLARE_API_TOKEN` set. It finds `cloudflare`/`cf` on `PATH` (or `$NOSTRIX_CF`, e.g.
 `NOSTRIX_CF="npx --yes cf"`) and looks the IDs up through your login. Add `--create-token`
-to also create a token limited to exactly what provisioning needs (this one account + zone,
+to also create an account-owned token (falling back to a user-owned one if your login can't make that) limited to exactly what provisioning needs (this one account + zone,
 expires after `--token-days`, default 7), which is printed once. That creates a real
 credential in your Cloudflare account, so it's opt-in. In this repo's dev shell,
 `just cf-login` then `just cloudflare example.com --create-token` does both.

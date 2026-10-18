@@ -161,8 +161,31 @@ func buildTokenPolicies(groups []permissionGroup, accountID, zoneID string) ([]b
 // mintScopedToken creates, through the cf CLI's login, an API token limited
 // to exactly what provisioning needs (one account, one zone), expiring at
 // expires. The secret is returned once by Cloudflare and never again.
-func mintScopedToken(run cfRunner, res prepResult, name string, expires time.Time) (string, error) {
-	out, err := run(nil, "user", "tokens", "permission-groups", "list")
+//
+// An account-owned token is preferred (Cloudflare's recommendation: it
+// belongs to the account rather than to one user's membership). If the
+// login isn't allowed to make one, it falls back to a user-owned token.
+// kind reports which was made: "account" or "user".
+func mintScopedToken(run cfRunner, res prepResult, name string, expires time.Time) (token, kind string, err error) {
+	token, aerr := mintVia(run, "accounts", res, name, expires)
+	if aerr == nil {
+		return token, "account", nil
+	}
+	fmt.Fprintf(os.Stderr, "note: could not create an account-owned token (%v); trying a user-owned token\n", aerr)
+	token, uerr := mintVia(run, "user", res, name, expires)
+	if uerr != nil {
+		return "", "", fmt.Errorf("account token: %v; user token: %w", aerr, uerr)
+	}
+	return token, "user", nil
+}
+
+// mintVia creates the token through one of `cf accounts tokens` or
+// `cf user tokens` (owner). Both take the same permission-group list and
+// request body; the account variant reads the account from
+// $CLOUDFLARE_ACCOUNT_ID, which is set here.
+func mintVia(run cfRunner, owner string, res prepResult, name string, expires time.Time) (string, error) {
+	env := []string{"CLOUDFLARE_ACCOUNT_ID=" + res.AccountID}
+	out, err := run(env, owner, "tokens", "permission-groups", "list")
 	if err != nil {
 		return "", err
 	}
@@ -174,18 +197,18 @@ func mintScopedToken(run cfRunner, res prepResult, name string, expires time.Tim
 	if err != nil {
 		return "", err
 	}
-	out, err = run(nil, "user", "tokens", "create",
+	out, err = run(env, owner, "tokens", "create",
 		"--name", name,
 		"--policies", string(policies),
 		"--expires-on", expires.UTC().Format(time.RFC3339))
 	if err != nil {
-		return "", fmt.Errorf("creating token (the login may lack API Tokens: Edit): %w", err)
+		return "", fmt.Errorf("creating token: %w", err)
 	}
 	var created struct {
 		Value string `json:"value"`
 	}
 	if err := json.Unmarshal(out, &created); err != nil || created.Value == "" {
-		return "", fmt.Errorf("`cf user tokens create` returned no token value")
+		return "", fmt.Errorf("`cf %s tokens create` returned no token value", owner)
 	}
 	return created.Value, nil
 }
