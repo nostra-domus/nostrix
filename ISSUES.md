@@ -255,12 +255,10 @@ genuinely no ethernet device, matching an unplugged Pi.
   evaluate to the expected values.
 - `nix build .#checks.x86_64-linux.apPortal` — passes.
 - `nix build .#images.raspberryPi3` — still builds with the new module wired in.
-- **Not yet done: real-hardware verification.** Flash a Pi, boot with no ethernet
-  connected, confirm the `nostrix-setup-<hostname>` hotspot appears, connect a phone
-  and confirm the OS's captive-portal prompt actually fires (this can't be verified
-  in a VM), submit the form including WiFi credentials, confirm `nixos-rebuild
-  switch` succeeds, the AP disappears, and the device is reachable on the real WiFi
-  network afterward.
+- **Real-hardware verification: done (2026-09-16)** — see the follow-up at the end of
+  this item. (That follow-up covers the hotspot, form submission, switch, and WiFi-only
+  reachability; it doesn't explicitly record whether a phone OS's captive-portal prompt
+  fired, which can't be checked in a VM.)
 
 **Update (2026-09-08): the sibling WiFi item is now done, unblocking the full pitch.** "Add
 WiFi configuration to the setup wizard" (above) shipped — `state.WifiSSID`/`WifiPSK`,
@@ -394,7 +392,61 @@ on its own next scheduled auto-upgrade.
 
 ---
 
+## Hostname rename, Cloudflare pre-flight tool, QEMU test VM
+
+**Status: implemented; verified end to end in the test VM (2026-10-17).** Hardware
+re-verification not done (the VM is x86_64; nothing here touched the Pi paths except the
+shared `apply()`).
+
+- **Bug fixed — first apply after renaming a device failed.** `apply()` ran
+  `nixos-rebuild switch --flake /etc/nixos` with no config name, so `nixos-rebuild` looked
+  up `nixosConfigurations.<running hostname>` — and the running hostname is still the image
+  default (`nostrix`) until the switch lands. Any hostname other than `nostrix` died instantly
+  with "flake does not provide attribute". Fixed: `apply()` reads the attribute name from the
+  generated flake (`configName`) and passes `--flake /etc/nixos#<name>` for both `switch` and
+  the `boot` fallback (`rebuildArgs`, covered by tests). The earlier real-hardware runs only
+  worked because the device already had the name it was configured with.
+- **`nostrix-setup cloudflare --domain <d>`** (`prep.go`, `cfcli.go`) — pre-flight run on the
+  user's own machine. Looks up account ID, zone ID and team domain, and probes the token's
+  permissions read-only. Works from `$CLOUDFLARE_API_TOKEN` or through Cloudflare's `cf` CLI
+  login; `--create-token` mints a token scoped to exactly what provisioning needs
+  (account-owned, falling back to user-owned). Run live: lookups, `--create-token` (user-owned)
+  and the resulting full provisioning flow all worked, so "Cloudflare Tunnel Write" is enough to
+  create tunnels. `just cf-login` / `just cloudflare <domain>` wrap it.
+- **`hardware.qemuVM` + `nixosConfigurations.vm`** (`just vm`) — an x86_64 VM mirroring the Pi
+  images' first-boot state. `hardware.qemuVM` imports nixpkgs' `qemu-vm.nix` and disables the
+  bootloader, which is what lets a *generated* flake be applied inside the VM (`genericX86_64`
+  fails at bootloader install; dropping `qemu-vm.nix` drops the VM's filesystems). Verified: form
+  with a new hostname → Cloudflare provisioning → switch → tunnel connected → public URL answers
+  with the Cloudflare Access login redirect.
+
+**Open follow-ups from this work:**
+- **Provisioning isn't retry-safe (untested).** `handleBootstrap` provisions Cloudflare *before*
+  the switch. If the switch then fails, the tunnel, DNS record and Access app are left behind
+  (this happened once and was cleaned up by hand). Whether re-submitting the form collides with
+  those leftovers is untested; it should either be idempotent (look up by name first) or clean up
+  after itself on failure.
+- **Account-owned tokens unverified.** The account-token path in `mintScopedToken` is covered by
+  unit tests and `--dry-run` syntax checks only; whether a given `cf` login is allowed to create
+  account tokens, and that the response carries the secret in `value`, hasn't been seen live. The
+  user-token fallback was verified live.
+- **No token revocation.** The `cf` login used got 403 on `user tokens`, so created tokens
+  can't be listed or deleted from the tool (they expire after `--token-days`, default 7). If
+  `cf accounts tokens list/delete` work for the login, a `--revoke-token` option would let the
+  tool clean up after itself.
+- **Live hostname lags until reboot.** After a rename-switch the kernel's transient hostname
+  stays the old name until the next reboot (`hostnamectl`: static = new, transient = old).
+  mDNS (`<new>.local`) is already correct, since Avahi follows the static name; low priority.
+- **`cf` is a beta** (output shapes and command names may change) and needs Node ≥ 22.18.
+  It's an optional path; the `$CLOUDFLARE_API_TOKEN` route has no such dependency.
+
+---
+
 ## Bake `nostrix-setup` into the SD card image
+
+**Status: open.** Re-checked 2026-10-18: no `environment.systemPackages` entry for
+`nostrix-setup` anywhere, so the SSH wizard still needs `nix run` on first boot (the phone
+bootstrap form doesn't, since `nostrix-web` runs it as a service by store path).
 
 **Context:** Found while getting a live Pi 3 running (2026-09-01). Today, first boot requires
 `nix run --extra-experimental-features "nix-command flakes" github:nostra-domus/nostrix` over
@@ -545,5 +597,10 @@ or `remove`. This is the same kind of drift the WiFi item's follow-up flagged an
 - **Go test coverage is partial** — `auth_test.go`, `cloudflare_test.go`, and `generate_test.go`
   now cover Access JWT verification, Cloudflare API provisioning, and flake generation. Still
   untested: `appNameFromURL` (git URL parsing, in `add.go`) has the most edge cases of what's left.
+  Also: `TestHandleSetupPersistsWifi` (`serve_test.go`) runs a *real* `nixos-rebuild switch`
+  (via `rebuildAsync` → `apply` → `runRebuild`) on whatever machine runs `go test` — it builds a
+  config under a temp dir and only fails to activate for lack of root. That's also the cause of
+  the `t.TempDir()` cleanup race noted under the AP-portal item. The rebuild step should be
+  injectable (a stub runner in tests) so tests never shell out to `nixos-rebuild`.
 - **No CI** — no `.github/workflows/`; `go test`/`go vet` and the Nix integration check are
   documented but nothing runs them automatically on push/PR.
