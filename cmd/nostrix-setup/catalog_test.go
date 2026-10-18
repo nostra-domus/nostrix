@@ -203,3 +203,21 @@ func TestAppsPageShowsRebuildStatus(t *testing.T) {
 		t.Errorf("Apps page should show the failure and that the app isn't running:\n%s", body)
 	}
 }
+
+func TestStatusPageListsCatalogApps(t *testing.T) {
+	srv, _ := newTestServer(t)
+	s := baseState()
+	s.Catalog = map[string]catalogApp{
+		"jellyfin":    {Expose: "lan"},
+		"uptime-kuma": {Expose: "cloudflare"},
+	}
+	saveState(srv.stateFile, s)
+	w := httptest.NewRecorder()
+	srv.handleIndex(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{"jellyfin (lan)", "uptime-kuma (cloudflare)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Status page is missing %q:\n%s", want, body)
+		}
+	}
+}
