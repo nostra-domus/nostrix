@@ -37,6 +37,7 @@
           raspberryPi4      = ./modules/hardware/raspberry-pi-4.nix;
           raspberryPiZero2W = ./modules/hardware/raspberry-pi-zero-2w.nix;
           genericX86_64     = ./modules/hardware/generic-x86_64.nix;
+          qemuVM            = ./modules/hardware/qemu-vm.nix;
         };
 
         # lib.mkSystem is the primary user-facing API.
@@ -144,11 +145,10 @@
           hostname = "nostrix";
           system   = "x86_64-linux";
           modules  = [
+            self.hardware.qemuVM
             self.nixosModules.web
             self.nixosModules.offlineSrc
-            ({ lib, modulesPath, ... }: {
-              imports = [ "${modulesPath}/virtualisation/qemu-vm.nix" ];
-
+            ({ lib, ... }: {
               users.users.root.password = "nostrix";
               services.openssh.settings.PasswordAuthentication = lib.mkForce true;
               services.openssh.settings.PermitRootLogin = lib.mkForce "yes";
@@ -156,13 +156,12 @@
 
               services.nginx.enable = true;
               networking.firewall.allowedTCPPorts = [ 80 ];
-              services.nostrix-web.hardware = "genericX86_64";
+              services.nostrix-web.hardware = "qemuVM";
 
               virtualisation = {
                 memorySize = 2048;
                 cores      = 2;
                 diskSize   = 8192;
-                graphics   = false;
                 forwardPorts = [
                   { from = "host"; host.port = 2222; guest.port = 22; }
                   { from = "host"; host.port = 8080; guest.port = 8080; }

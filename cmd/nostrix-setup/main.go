@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -91,7 +92,8 @@ func apply(path, content string, upgradeAll bool) error {
 	}
 	fmt.Printf("Written %s\n\n", path)
 
-	switchErr, output := runRebuild(path, "switch", upgradeAll)
+	cfgName := configName(content)
+	switchErr, output := runRebuild(path, cfgName, "switch", upgradeAll)
 	if switchErr == nil {
 		return nil
 	}
@@ -104,7 +106,7 @@ func apply(path, content string, upgradeAll bool) error {
 	fmt.Println("to `nixos-rebuild boot` plus a reboot, same as the weekly auto-upgrade does")
 	fmt.Println("for this case.")
 	fmt.Println()
-	if bootErr, _ := runRebuild(path, "boot", upgradeAll); bootErr != nil {
+	if bootErr, _ := runRebuild(path, cfgName, "boot", upgradeAll); bootErr != nil {
 		return bootErr
 	}
 
@@ -112,15 +114,40 @@ func apply(path, content string, upgradeAll bool) error {
 	return exec.Command("shutdown", "-r", "+1", "Nostrix: rebooting to apply pending configuration").Run()
 }
 
-// runRebuild runs `nixos-rebuild <action> --flake <dir>`, streaming its
-// output live (as before) while also capturing it, so apply() can inspect
-// it for switchInhibitedMarker without changing what the user/journal sees.
-func runRebuild(path, action string, upgradeAll bool) (error, string) {
-	flakeDir := filepath.Dir(path)
-	args := []string{action, "--flake", flakeDir}
+var configNameRe = regexp.MustCompile(`nixosConfigurations\.([A-Za-z0-9_-]+)\s*=`)
+
+// configName extracts the nixosConfigurations attribute name from a
+// generated flake.nix ("" if absent). nixos-rebuild otherwise looks the
+// configuration up by the *running* hostname, so the first apply after
+// renaming the device (nostrix → myserver) fails with "flake does not
+// provide attribute nixosConfigurations.nostrix" — the config has to be
+// named explicitly.
+func configName(flake string) string {
+	if m := configNameRe.FindStringSubmatch(flake); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// rebuildArgs builds the nixos-rebuild arguments for the flake at path.
+func rebuildArgs(path, cfgName, action string, upgradeAll bool) []string {
+	flakeRef := filepath.Dir(path)
+	if cfgName != "" {
+		flakeRef += "#" + cfgName
+	}
+	args := []string{action, "--flake", flakeRef}
 	if upgradeAll {
 		args = append(args, "--upgrade-all")
 	}
+	return args
+}
+
+// runRebuild runs `nixos-rebuild <action> --flake <dir>[#cfgName]`,
+// streaming its output live (as before) while also capturing it, so
+// apply() can inspect it for switchInhibitedMarker without changing what
+// the user/journal sees.
+func runRebuild(path, cfgName, action string, upgradeAll bool) (error, string) {
+	args := rebuildArgs(path, cfgName, action, upgradeAll)
 	fmt.Printf("Running: nixos-rebuild %s\n\n", strings.Join(args, " "))
 
 	// Use the stable, well-known location rather than a PATH search.

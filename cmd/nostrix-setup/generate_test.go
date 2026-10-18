@@ -155,3 +155,44 @@ func TestGenerateEscapesCloudflareValues(t *testing.T) {
 		t.Errorf("Cloudflare team domain was not escaped, got:\n%s", out)
 	}
 }
+
+// Regression: a first-time rename (running hostname "nostrix", generated
+// config "nostrix-vm") must still name the config explicitly, or
+// nixos-rebuild looks up nixosConfigurations.nostrix and fails.
+func TestConfigNameMatchesGeneratedHostname(t *testing.T) {
+	flake, err := generate(state{Hostname: "nostrix-vm", Hardware: "genericX86_64"})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if got := configName(flake); got != "nostrix-vm" {
+		t.Errorf("configName = %q, want nostrix-vm", got)
+	}
+	if got := configName("{ }"); got != "" {
+		t.Errorf("configName of a flake without one = %q, want empty", got)
+	}
+}
+
+func TestRebuildArgsNamesTheConfigForARenamedDevice(t *testing.T) {
+	flake, err := generate(state{Hostname: "nostrix-vm", Hardware: "genericX86_64"})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := strings.Join(rebuildArgs("/etc/nixos/flake.nix", configName(flake), "switch", false), " ")
+	if want := "switch --flake /etc/nixos#nostrix-vm"; got != want {
+		t.Errorf("args = %q, want %q", got, want)
+	}
+	got = strings.Join(rebuildArgs("/etc/nixos/flake.nix", "", "boot", true), " ")
+	if want := "boot --flake /etc/nixos --upgrade-all"; got != want {
+		t.Errorf("args without a name = %q, want %q", got, want)
+	}
+}
+
+func TestGenerateUsesQemuVMHardware(t *testing.T) {
+	flake, err := generate(state{Hostname: "nostrix-vm", Hardware: "qemuVM"})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if !strings.Contains(flake, "nostrix.hardware.qemuVM") {
+		t.Errorf("generated flake does not use the qemuVM profile:\n%s", flake)
+	}
+}

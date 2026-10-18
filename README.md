@@ -156,6 +156,7 @@ in
 | `nostrix.hardware.raspberryPi3` | Raspberry Pi 3 (A+, B, B+) |
 | `nostrix.hardware.raspberryPiZero2W` | Raspberry Pi Zero 2W |
 | `nostrix.hardware.genericX86_64` | PC, VM, or VPS (systemd-boot + EFI) |
+| `nostrix.hardware.qemuVM` | The QEMU test VM only (`just vm`) — no bootloader, VM disks from nixpkgs' `qemu-vm.nix` |
 
 ### Setup wizard
 

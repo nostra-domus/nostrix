@@ -133,6 +133,8 @@ func hwToNix(name string) string {
 		return "nostrix.hardware.raspberryPiZero2W"
 	case "genericX86_64":
 		return "nostrix.hardware.genericX86_64"
+	case "qemuVM":
+		return "nostrix.hardware.qemuVM"
 	default:
 		return ""
 	}

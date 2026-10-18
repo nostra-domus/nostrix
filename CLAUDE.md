@@ -54,6 +54,7 @@ go vet ./...
 | `nixosModules.default` | Top-level NixOS module — imports base + mDNS |
 | `hardware.raspberryPiZero2W` | aarch64 hardware profile (BCM2837B0, extlinux, zram) |
 | `hardware.genericX86_64` | x86_64 hardware profile (systemd-boot, EFI) |
+| `hardware.qemuVM` | x86_64 test-VM profile: imports nixpkgs' `qemu-vm.nix`, bootloader off. Used by `nixosConfigurations.vm` (`just vm`) so a *generated* flake can be applied inside the VM — `genericX86_64` there fails at bootloader install, and dropping `qemu-vm.nix` drops the VM's filesystems |
 | `lib.mkSystem` | Build a NixOS config with the Nostrix base stack |
 | `lib.mkImage` | Build a compressed SD card image (calls mkSystem + sd-image-aarch64 module) |
 | `images.raspberryPiZero2W` | Pre-built SD card image with temp credentials for first boot |
