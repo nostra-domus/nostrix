@@ -43,6 +43,7 @@ func (r prepResult) allOK() bool {
 // cfZone is the part of a zone object both lookups need.
 type cfZone struct {
 	ID      string `json:"id"`
+	Name    string `json:"name"`
 	Account struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`

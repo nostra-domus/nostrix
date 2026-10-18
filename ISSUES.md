@@ -512,6 +512,7 @@ Not verified / open:
 - **Jellyfin `mediaDir`** is only created and made group-writable; whether Jellyfin's sandbox can read arbitrary folders is untested.
 - **Vaultwarden `domain`** is typed in by hand; it could be filled in from the published hostname.
 - **No secrets** (admin passwords) in the catalog by design.
+- **Found in the VM and fixed:** a rebuild requested while another was running was dropped (its state was saved but never built; the page still said "up to date"). It is now queued and runs once more from the latest state, and the Apps page shows rebuild progress and whether each app is running. Also fixed: a device whose state predates `cloudflareBaseDomain` asked for the domain; it is now detected from the token when the token sees exactly one zone.
 - The Apps page only edits the state file; a hand-edited `local.nix` that sets the same options will win or conflict silently.
 - Catalog apps can't be removed with the CLI; `list`/`remove` cover flake apps only.
 

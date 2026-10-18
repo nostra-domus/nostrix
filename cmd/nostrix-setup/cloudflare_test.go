@@ -187,11 +187,11 @@ func (a *fakeAccount) handler() http.Handler {
 	}))
 
 	mux.HandleFunc("GET /zones", lock(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("name") != "example.com" {
+		if n := r.URL.Query().Get("name"); n != "" && n != "example.com" {
 			writeCFSuccess(w, []any{})
 			return
 		}
-		writeCFSuccess(w, []any{map[string]any{"id": "zone1", "account": map[string]any{"id": "acct1", "name": "Acct"}}})
+		writeCFSuccess(w, []any{map[string]any{"id": "zone1", "name": "example.com", "account": map[string]any{"id": "acct1", "name": "Acct"}}})
 	}))
 	mux.HandleFunc("DELETE /zones/zone1/dns_records/{id}", lock(func(w http.ResponseWriter, r *http.Request) {
 		a.deletes["dns"]++

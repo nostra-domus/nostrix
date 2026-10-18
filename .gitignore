@@ -9,3 +9,4 @@ pi3.img.zst
 nostrix.qcow2
 .direnv
 .cloudflare
+.vm-cloudflare

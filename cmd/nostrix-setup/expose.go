@@ -106,8 +106,9 @@ func planExposure(cfg exposeConfig, apps []declaredApp) ([]plannedApp, error) {
 }
 
 type exposeResult struct {
-	Exposed []plannedApp
-	Removed []string // hostnames whose routing, DNS record and Access app were taken down
+	BaseDomain string // the domain used (detected from the token when none was given)
+	Exposed    []plannedApp
+	Removed    []string // hostnames whose routing, DNS record and Access app were taken down
 }
 
 // reconcileExposure makes Cloudflare match the declared apps: every app with
@@ -124,6 +125,14 @@ type exposeResult struct {
 // that very tunnel.
 func reconcileExposure(c *cloudflareClient, cfg exposeConfig, apps []declaredApp) (exposeResult, error) {
 	var res exposeResult
+	if cfg.BaseDomain == "" {
+		base, err := c.onlyZone()
+		if err != nil {
+			return res, err
+		}
+		cfg.BaseDomain = base
+	}
+	res.BaseDomain = cfg.BaseDomain
 	plan, err := planExposure(cfg, apps)
 	if err != nil {
 		return res, err
@@ -238,8 +247,15 @@ func (srv *server) newCFClient(token string) *cloudflareClient {
 // appsPage is the data for the Apps page: the registered apps plus what the
 // running system declares about each app's exposure.
 func (srv *server) appsPage(s state) pageData {
-	d := pageData{State: s, Catalog: catalogViews(s)}
 	apps, err := readDeclaredApps(srv.appsPath())
+	live := map[string]bool{}
+	for _, a := range apps {
+		live[a.Name] = true
+	}
+	d := pageData{State: s, Catalog: catalogViews(s, live)}
+	srv.mu.Lock()
+	d.Rebuilding, d.LastError = srv.rebuilding, srv.lastError
+	srv.mu.Unlock()
 	if err != nil {
 		d.Problem = err.Error()
 	}
@@ -286,8 +302,8 @@ func (srv *server) handleAppsExpose(w http.ResponseWriter, r *http.Request) {
 	if base == "" {
 		base = s.CloudflareBaseDomain
 	}
-	if token == "" || base == "" {
-		page("", "An API token and a base domain are both needed.")
+	if token == "" {
+		page("", "An API token is needed.")
 		return
 	}
 	apps, err := readDeclaredApps(srv.appsPath())
@@ -303,8 +319,8 @@ func (srv *server) handleAppsExpose(w http.ResponseWriter, r *http.Request) {
 		page("", err.Error())
 		return
 	}
-	if s.CloudflareBaseDomain != base {
-		s.CloudflareBaseDomain = base
+	if res.BaseDomain != "" && s.CloudflareBaseDomain != res.BaseDomain {
+		s.CloudflareBaseDomain = res.BaseDomain
 		_ = saveState(srv.stateFile, s)
 	}
 	page(res.summary(), "")

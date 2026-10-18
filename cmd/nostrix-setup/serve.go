@@ -49,6 +49,12 @@ type server struct {
 	mu         sync.Mutex
 	rebuilding bool
 	lastError  string
+
+	// A change that arrives while a rebuild is running is not dropped (its
+	// state is already saved, so the running rebuild may not include it):
+	// one more rebuild runs afterwards, from the then-current state.
+	queued        bool
+	queuedUpgrade bool
 }
 
 type pageData struct {
@@ -354,6 +360,8 @@ func (srv *server) applyState(s state) error {
 func (srv *server) rebuildAsync(flake string, upgradeAll bool) {
 	srv.mu.Lock()
 	if srv.rebuilding {
+		srv.queued = true
+		srv.queuedUpgrade = srv.queuedUpgrade || upgradeAll
 		srv.mu.Unlock()
 		return
 	}
@@ -366,14 +374,37 @@ func (srv *server) rebuildAsync(flake string, upgradeAll bool) {
 	srv.mu.Unlock()
 
 	go func() {
-		err := doApply(srv.output, flake, upgradeAll)
+		for {
+			err := doApply(srv.output, flake, upgradeAll)
 
-		srv.mu.Lock()
-		srv.rebuilding = false
-		if err != nil {
-			srv.lastError = err.Error()
+			srv.mu.Lock()
+			if err != nil {
+				srv.lastError = err.Error()
+			}
+			if !srv.queued {
+				srv.rebuilding = false
+				srv.mu.Unlock()
+				return
+			}
+			// Something changed meanwhile: go again from the latest state.
+			upgradeAll = srv.queuedUpgrade
+			srv.queued, srv.queuedUpgrade = false, false
+			srv.mu.Unlock()
+
+			s, _ := loadState(srv.stateFile)
+			next, gerr := generate(s)
+			if gerr != nil {
+				srv.mu.Lock()
+				srv.rebuilding = false
+				srv.lastError = gerr.Error()
+				srv.mu.Unlock()
+				return
+			}
+			srv.mu.Lock()
+			srv.lastError = ""
+			srv.mu.Unlock()
+			flake = next
 		}
-		srv.mu.Unlock()
 	}()
 }
 

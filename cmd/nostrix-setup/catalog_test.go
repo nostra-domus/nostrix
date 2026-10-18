@@ -166,7 +166,7 @@ func TestAppsPageShowsTheCatalog(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.handleApps(w, httptest.NewRequest(http.MethodGet, "/apps", nil))
 	body := w.Body.String()
-	for _, want := range []string{"Jellyfin", "Vaultwarden", "Uptime Kuma", `value="/srv/tv"`, "installed"} {
+	for _, want := range []string{"Jellyfin", "Vaultwarden", "Uptime Kuma", `value="/srv/tv"`, "not running yet"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Apps page is missing %q", want)
 		}
@@ -174,5 +174,32 @@ func TestAppsPageShowsTheCatalog(t *testing.T) {
 	// Cloudflare isn't set up, so publishing is offered but disabled.
 	if !strings.Contains(body, "disabled") {
 		t.Error("the Cloudflare choice should be disabled without Cloudflare")
+	}
+}
+
+func TestAppsPageShowsRebuildStatus(t *testing.T) {
+	srv, _ := newTestServer(t)
+	s := baseState()
+	s.Catalog = map[string]catalogApp{"uptime-kuma": {Expose: "none"}}
+	saveState(srv.stateFile, s)
+	srv.mu.Lock()
+	srv.rebuilding = true
+	srv.mu.Unlock()
+	w := httptest.NewRecorder()
+	srv.handleApps(w, httptest.NewRequest(http.MethodGet, "/apps", nil))
+	body := w.Body.String()
+	for _, want := range []string{"Applying your changes", "http-equiv=\"refresh\"", "being installed"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Apps page is missing %q while rebuilding", want)
+		}
+	}
+	srv.mu.Lock()
+	srv.rebuilding, srv.lastError = false, "boom"
+	srv.mu.Unlock()
+	w = httptest.NewRecorder()
+	srv.handleApps(w, httptest.NewRequest(http.MethodGet, "/apps", nil))
+	body = w.Body.String()
+	if !strings.Contains(body, "The last rebuild failed: boom") || !strings.Contains(body, "not running yet") {
+		t.Errorf("Apps page should show the failure and that the app isn't running:\n%s", body)
 	}
 }

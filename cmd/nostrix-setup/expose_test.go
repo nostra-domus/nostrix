@@ -242,3 +242,19 @@ func TestProvisionAfterAppsAreExposedStillRecognisesTheTunnel(t *testing.T) {
 		t.Errorf("provisioning dropped the app route: %+v", got)
 	}
 }
+
+// A device set up before the base domain was recorded must not ask for it:
+// its token covers one domain, which is it.
+func TestReconcileExposureDetectsTheBaseDomain(t *testing.T) {
+	_, client := provisioned(t)
+	cfg := exposeCfg()
+	cfg.BaseDomain = ""
+
+	res, err := reconcileExposure(client, cfg, jelly)
+	if err != nil {
+		t.Fatalf("reconcileExposure: %v", err)
+	}
+	if res.BaseDomain != "example.com" || len(res.Exposed) != 1 || res.Exposed[0].Hostname != "pi-test-jelly.example.com" {
+		t.Errorf("res = %+v; want the base domain detected as example.com", res)
+	}
+}

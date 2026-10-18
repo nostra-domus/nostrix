@@ -157,15 +157,16 @@ type fieldView struct {
 type catalogView struct {
 	catalogEntry
 	Installed bool
+	Live      bool // the running system already declares it (apps.json)
 	Choices   []exposeChoice
 	Form      []fieldView
 }
 
-func catalogViews(s state) []catalogView {
+func catalogViews(s state, live map[string]bool) []catalogView {
 	var views []catalogView
 	for _, e := range loadCatalog() {
 		cur, installed := s.Catalog[e.ID]
-		v := catalogView{catalogEntry: e, Installed: installed}
+		v := catalogView{catalogEntry: e, Installed: installed, Live: live[e.ID]}
 		for _, x := range e.Expose {
 			v.Choices = append(v.Choices, exposeChoice{
 				Value:    x,

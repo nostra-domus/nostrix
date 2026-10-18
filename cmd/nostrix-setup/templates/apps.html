@@ -4,6 +4,7 @@
 <head>
 <meta charset="utf-8">
 <title>Nostrix — Apps</title>
+{{if .Rebuilding}}<meta http-equiv="refresh" content="5">{{end}}
 <style>
   body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
   nav a { margin-right: 1rem; }
@@ -21,12 +22,14 @@
 <body>
 <nav><a href="/">Status</a> <a href="/setup">Setup</a> <a href="/apps">Apps</a></nav>
 <h1>Apps</h1>
+{{if .Rebuilding}}<p style="background:#fff4d6;padding:0.5rem">Applying your changes (rebuilding the system). This takes a minute or two; the page refreshes by itself.</p>
+{{else if .LastError}}<p style="background:#fdecea;padding:0.5rem">The last rebuild failed: {{.LastError}}</p>{{end}}
 {{if .Notice}}<p style="background:#e6f4ea;padding:0.5rem">{{.Notice}}</p>{{end}}
 {{if .Problem}}<p style="background:#fdecea;padding:0.5rem">{{.Problem}}</p>{{end}}
 
 {{range .Catalog}}
 <section class="card">
-  <h2>{{.Name}}{{if .Installed}} <small>— installed</small>{{end}}</h2>
+  <h2>{{.Name}}{{if .Installed}} <small>— {{if .Live}}installed{{else if $.Rebuilding}}being installed…{{else}}chosen, not running yet{{end}}</small>{{end}}</h2>
   <p>{{.Description}}</p>
   {{if .Note}}<p><small>{{.Note}}</small></p>{{end}}
   <form method="post" action="/apps/catalog">
@@ -100,7 +103,7 @@
 <p><small>Makes Cloudflare match the table above: apps set to <code>cloudflare</code> get an address behind Cloudflare Access (only your email), and apps no longer set to it are taken down. The API token is used for this request only and is not stored.</small></p>
 <form class="add" method="post" action="/apps/expose">
   <input type="password" name="apiToken" placeholder="Cloudflare API token" autocomplete="off" required>
-  {{if not .State.CloudflareBaseDomain}}<input type="text" name="baseDomain" placeholder="base domain, e.g. example.com" required>{{end}}
+  {{if not .State.CloudflareBaseDomain}}<input type="text" name="baseDomain" placeholder="domain (optional, detected from the token)">{{end}}
   <button type="submit">Publish</button>
 </form>
 {{end}}

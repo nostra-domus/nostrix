@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -291,6 +292,27 @@ func (c *cloudflareClient) zoneByName(domain string) (accountID, zoneID string, 
 		return "", "", fmt.Errorf("no zone named %q is visible to this token", domain)
 	}
 	return zones[0].Account.ID, zones[0].ID, nil
+}
+
+// onlyZone returns the domain the token can see, when it is exactly one: the
+// scoped token this device uses covers a single zone, so that is the base
+// domain and the user need not type it.
+func (c *cloudflareClient) onlyZone() (string, error) {
+	var zones []cfZone
+	if err := c.do(http.MethodGet, "/zones?per_page=50", nil, &zones); err != nil {
+		return "", fmt.Errorf("listing domains (token needs Zone:Read): %w", err)
+	}
+	switch len(zones) {
+	case 0:
+		return "", fmt.Errorf("this token can't see any domain")
+	case 1:
+		return zones[0].Name, nil
+	}
+	names := make([]string, len(zones))
+	for i, z := range zones {
+		names[i] = z.Name
+	}
+	return "", fmt.Errorf("this token can see several domains (%s); say which one", strings.Join(names, ", "))
 }
 
 type cfDNSRecord struct {

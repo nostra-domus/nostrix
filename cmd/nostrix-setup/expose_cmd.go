@@ -35,6 +35,25 @@ func runExpose(args []string) {
 
 	r := bufio.NewReader(os.Stdin)
 	base := s.CloudflareBaseDomain
+	token := ""
+	if !*dryRun {
+		token = os.Getenv("CLOUDFLARE_API_TOKEN")
+		if token == "" {
+			token = prompt(r, "Cloudflare API token (used for this run only, not stored)", "")
+		}
+		if token == "" {
+			fmt.Fprintln(os.Stderr, "error: an API token is required")
+			os.Exit(2)
+		}
+	}
+	if base == "" && token != "" {
+		// The device's token covers one domain; use it rather than asking.
+		if b, err := newCloudflareClient(token).onlyZone(); err == nil {
+			base = b
+		} else {
+			fmt.Fprintf(os.Stderr, "note: %v\n", err)
+		}
+	}
 	if base == "" {
 		base = prompt(r, "Base domain (e.g. example.com)", "")
 	}
@@ -56,14 +75,6 @@ func runExpose(args []string) {
 		return
 	}
 
-	token := os.Getenv("CLOUDFLARE_API_TOKEN")
-	if token == "" {
-		token = prompt(r, "Cloudflare API token (used for this run only, not stored)", "")
-	}
-	if token == "" {
-		fmt.Fprintln(os.Stderr, "error: an API token is required")
-		os.Exit(2)
-	}
 	res, err := reconcileExposure(newCloudflareClient(token), cfg, apps)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

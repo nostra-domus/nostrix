@@ -162,18 +162,29 @@ func TestRebuildFailureIsSurfaced(t *testing.T) {
 	}
 }
 
-func TestOverlappingRebuildIsIgnored(t *testing.T) {
+// A change saved while a rebuild is running must not be lost: one more
+// rebuild runs afterwards, generated from the state saved by then.
+func TestOverlappingRebuildIsQueued(t *testing.T) {
 	srv, rec := newTestServer(t)
 	rec.block = make(chan struct{})
 
 	srv.rebuildAsync("first", false)
-	srv.rebuildAsync("second", false) // arrives while the first is still running
+	s := state{Hostname: "later"}
+	saveState(srv.stateFile, s)      // what the second request saved before calling rebuildAsync
+	srv.rebuildAsync("second", true) // arrives while the first is still running
+	srv.rebuildAsync("third", false) // two waiting requests still mean just one more run
 	close(rec.block)
 	waitIdle(t, srv)
 
 	calls := rec.recorded()
-	if len(calls) != 1 || calls[0].content != "first" {
-		t.Errorf("calls = %+v, want only the first rebuild to run", calls)
+	if len(calls) != 2 {
+		t.Fatalf("calls = %+v, want the first rebuild plus one queued rebuild", calls)
+	}
+	if calls[0].content != "first" {
+		t.Errorf("first call = %q", calls[0].content)
+	}
+	if !strings.Contains(calls[1].content, "nixosConfigurations.later") || !calls[1].upgradeAll {
+		t.Errorf("queued rebuild should use the latest saved state and keep upgradeAll: %+v", calls[1])
 	}
 }
 
@@ -317,5 +328,19 @@ func TestAppsPageListsWhatIsDeclared(t *testing.T) {
 	}
 	if strings.Contains(body, "tunnel-token") {
 		t.Error("the Apps page leaks the tunnel token")
+	}
+}
+
+func TestHandleAppsExposeDetectsAndRemembersTheBaseDomain(t *testing.T) {
+	srv, _, _ := exposeServer(t)
+	if err := saveState(srv.stateFile, state{Hostname: "pi-test", OwnerEmail: "owner@example.com", CloudflareTunnelToken: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	w := postForm(srv.handleAppsExpose, "/apps/expose", url.Values{"apiToken": {"x"}}) // no base domain typed
+	if !strings.Contains(w.Body.String(), "published jelly at https://pi-test-jelly.example.com") {
+		t.Fatalf("body:\n%s", w.Body.String())
+	}
+	if s, _ := loadState(srv.stateFile); s.CloudflareBaseDomain != "example.com" {
+		t.Errorf("detected base domain not remembered: %+v", s)
 	}
 }
