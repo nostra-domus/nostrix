@@ -110,14 +110,22 @@ func (c *cloudflareClient) tunnelToken(accountID, tunnelID string) (string, erro
 // server-side, so the device needs nothing beyond `cloudflared tunnel run
 // --token ...` — no local config.yml.
 func (c *cloudflareClient) setTunnelIngress(accountID, tunnelID, hostname string) error {
-	body := map[string]any{
-		"config": map[string]any{
-			"ingress": []map[string]any{
-				{"hostname": hostname, "service": tunnelOriginService},
-				{"service": tunnelCatchAll},
-			},
-		},
+	return c.setTunnelRules(accountID, tunnelID, []ingressRule{{hostname, tunnelOriginService}})
+}
+
+// ingressRule is one routing rule of a remotely-managed tunnel.
+type ingressRule struct{ Hostname, Service string }
+
+// setTunnelRules replaces the tunnel's whole routing with rules, followed by
+// the mandatory catch-all. setTunnelIngress is the device-only form used at
+// setup; this is the general one, used once apps are exposed (expose.go).
+func (c *cloudflareClient) setTunnelRules(accountID, tunnelID string, rules []ingressRule) error {
+	ingress := []map[string]any{}
+	for _, r := range rules {
+		ingress = append(ingress, map[string]any{"hostname": r.Hostname, "service": r.Service})
 	}
+	ingress = append(ingress, map[string]any{"service": tunnelCatchAll})
+	body := map[string]any{"config": map[string]any{"ingress": ingress}}
 	path := fmt.Sprintf("/accounts/%s/cfd_tunnel/%s/configurations", accountID, tunnelID)
 	if err := c.do(http.MethodPut, path, body, nil); err != nil {
 		return fmt.Errorf("setting tunnel ingress: %w", err)
@@ -182,7 +190,7 @@ func (c *cloudflareClient) createAccessPolicy(accountID, appID, email string) er
 // just because someone typed that hostname).
 
 // tunnelIngress returns the routing rules of a remotely-managed tunnel.
-func (c *cloudflareClient) tunnelIngress(accountID, tunnelID string) ([]struct{ Hostname, Service string }, error) {
+func (c *cloudflareClient) tunnelIngress(accountID, tunnelID string) ([]ingressRule, error) {
 	var cfg struct {
 		Config struct {
 			Ingress []struct {
@@ -195,23 +203,30 @@ func (c *cloudflareClient) tunnelIngress(accountID, tunnelID string) ([]struct{ 
 	if err := c.do(http.MethodGet, path, nil, &cfg); err != nil {
 		return nil, fmt.Errorf("reading tunnel config: %w", err)
 	}
-	var rules []struct{ Hostname, Service string }
+	var rules []ingressRule
 	for _, r := range cfg.Config.Ingress {
-		rules = append(rules, struct{ Hostname, Service string }{r.Hostname, r.Service})
+		rules = append(rules, ingressRule{r.Hostname, r.Service})
 	}
 	return rules, nil
 }
 
 // ingressIsOurs reports whether a tunnel's routing is empty (created by an
-// earlier run that failed before configuring it) or exactly what
-// setTunnelIngress writes for hostname.
-func ingressIsOurs(rules []struct{ Hostname, Service string }, hostname string) bool {
-	switch len(rules) {
-	case 0:
+// earlier run that failed before configuring it) or a routing we wrote: it
+// routes the device's own hostname to the web UI and ends in the catch-all.
+// Further hostname rules in between are exposed apps (expose.go) and are
+// ours too; anything else means the tunnel belongs to something else.
+func ingressIsOurs(rules []ingressRule, hostname string) bool {
+	if len(rules) == 0 {
 		return true
-	case 2:
-		return rules[0].Hostname == hostname && rules[0].Service == tunnelOriginService &&
-			rules[1].Hostname == "" && rules[1].Service == tunnelCatchAll
+	}
+	last := rules[len(rules)-1]
+	if last.Hostname != "" || last.Service != tunnelCatchAll {
+		return false
+	}
+	for _, r := range rules[:len(rules)-1] {
+		if r.Hostname == hostname && r.Service == tunnelOriginService {
+			return true
+		}
 	}
 	return false
 }
@@ -219,20 +234,11 @@ func ingressIsOurs(rules []struct{ Hostname, Service string }, hostname string) 
 // ensureTunnel returns the ID of this device's tunnel, creating it unless
 // an earlier run already did.
 func (c *cloudflareClient) ensureTunnel(accountID, name, hostname string) (id string, reused bool, err error) {
-	var tunnels []struct {
-		ID        string  `json:"id"`
-		Name      string  `json:"name"`
-		ConfigSrc string  `json:"config_src"`
-		DeletedAt *string `json:"deleted_at"`
+	t, err := c.lookupTunnel(accountID, name)
+	if err != nil {
+		return "", false, err
 	}
-	path := fmt.Sprintf("/accounts/%s/cfd_tunnel?is_deleted=false&name=%s", accountID, url.QueryEscape(name))
-	if err := c.do(http.MethodGet, path, nil, &tunnels); err != nil {
-		return "", false, fmt.Errorf("looking up tunnel: %w", err)
-	}
-	for _, t := range tunnels {
-		if t.Name != name || t.DeletedAt != nil {
-			continue
-		}
+	if t != nil {
 		if t.ConfigSrc != "cloudflare" {
 			return "", false, fmt.Errorf("a locally-managed tunnel named %q already exists; choose a different hostname or delete it", name)
 		}
@@ -249,16 +255,105 @@ func (c *cloudflareClient) ensureTunnel(accountID, name, hostname string) (id st
 	return id, false, err
 }
 
+// cfTunnel is the part of a tunnel object the lookups need.
+type cfTunnel struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	ConfigSrc string `json:"config_src"`
+}
+
+// lookupTunnel finds the live tunnel called name, or nil if there is none.
+func (c *cloudflareClient) lookupTunnel(accountID, name string) (*cfTunnel, error) {
+	var tunnels []struct {
+		cfTunnel
+		DeletedAt *string `json:"deleted_at"`
+	}
+	path := fmt.Sprintf("/accounts/%s/cfd_tunnel?is_deleted=false&name=%s", accountID, url.QueryEscape(name))
+	if err := c.do(http.MethodGet, path, nil, &tunnels); err != nil {
+		return nil, fmt.Errorf("looking up tunnel: %w", err)
+	}
+	for _, t := range tunnels {
+		if t.Name == name && t.DeletedAt == nil {
+			found := t.cfTunnel
+			return &found, nil
+		}
+	}
+	return nil, nil
+}
+
+// zoneByName resolves a domain to its zone ID and owning account ID.
+func (c *cloudflareClient) zoneByName(domain string) (accountID, zoneID string, err error) {
+	var zones []cfZone
+	if err := c.do(http.MethodGet, "/zones?name="+url.QueryEscape(domain), nil, &zones); err != nil {
+		return "", "", fmt.Errorf("looking up zone %s (token needs Zone:Read): %w", domain, err)
+	}
+	if len(zones) == 0 {
+		return "", "", fmt.Errorf("no zone named %q is visible to this token", domain)
+	}
+	return zones[0].Account.ID, zones[0].ID, nil
+}
+
+type cfDNSRecord struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Content string `json:"content"`
+}
+
+func (c *cloudflareClient) listDNSRecords(zoneID, hostname string) ([]cfDNSRecord, error) {
+	var records []cfDNSRecord
+	path := fmt.Sprintf("/zones/%s/dns_records?name=%s", zoneID, url.QueryEscape(hostname))
+	if err := c.do(http.MethodGet, path, nil, &records); err != nil {
+		return nil, fmt.Errorf("looking up DNS record: %w", err)
+	}
+	return records, nil
+}
+
+func (c *cloudflareClient) deleteDNSRecord(zoneID, recordID string) error {
+	if err := c.do(http.MethodDelete, fmt.Sprintf("/zones/%s/dns_records/%s", zoneID, recordID), nil, nil); err != nil {
+		return fmt.Errorf("deleting DNS record: %w", err)
+	}
+	return nil
+}
+
+type cfAccessApp struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Domain string `json:"domain"`
+	Type   string `json:"type"`
+	Aud    string `json:"aud"`
+}
+
+// listAccessApps returns every Access application in the account.
+func (c *cloudflareClient) listAccessApps(accountID string) ([]cfAccessApp, error) {
+	const perPage = 100
+	var all []cfAccessApp
+	for page := 1; page <= 50; page++ {
+		var apps []cfAccessApp
+		path := fmt.Sprintf("/accounts/%s/access/apps?page=%d&per_page=%d", accountID, page, perPage)
+		if err := c.do(http.MethodGet, path, nil, &apps); err != nil {
+			return nil, fmt.Errorf("looking up access app: %w", err)
+		}
+		all = append(all, apps...)
+		if len(apps) < perPage {
+			break
+		}
+	}
+	return all, nil
+}
+
+func (c *cloudflareClient) deleteAccessApp(accountID, appID string) error {
+	if err := c.do(http.MethodDelete, fmt.Sprintf("/accounts/%s/access/apps/%s", accountID, appID), nil, nil); err != nil {
+		return fmt.Errorf("deleting access app: %w", err)
+	}
+	return nil
+}
+
 // ensureDNSRecord creates the CNAME to the tunnel unless it already exists.
 // A record with this name that points anywhere else is never touched.
 func (c *cloudflareClient) ensureDNSRecord(zoneID, hostname, target string) (reused bool, err error) {
-	var records []struct {
-		Type    string `json:"type"`
-		Content string `json:"content"`
-	}
-	path := fmt.Sprintf("/zones/%s/dns_records?name=%s", zoneID, url.QueryEscape(hostname))
-	if err := c.do(http.MethodGet, path, nil, &records); err != nil {
-		return false, fmt.Errorf("looking up DNS record: %w", err)
+	records, err := c.listDNSRecords(zoneID, hostname)
+	if err != nil {
+		return false, err
 	}
 	for _, r := range records {
 		if r.Type == "CNAME" && r.Content == target {
@@ -273,31 +368,18 @@ func (c *cloudflareClient) ensureDNSRecord(zoneID, hostname, target string) (reu
 // unless an earlier run already did. An app on that hostname under a
 // different name is someone else's and is left alone.
 func (c *cloudflareClient) ensureAccessApp(accountID, name, hostname string) (appID, aud string, reused bool, err error) {
-	const perPage = 100
-	for page := 1; page <= 50; page++ {
-		var apps []struct {
-			ID     string `json:"id"`
-			Name   string `json:"name"`
-			Domain string `json:"domain"`
-			Type   string `json:"type"`
-			Aud    string `json:"aud"`
+	apps, err := c.listAccessApps(accountID)
+	if err != nil {
+		return "", "", false, err
+	}
+	for _, a := range apps {
+		if a.Domain != hostname {
+			continue
 		}
-		path := fmt.Sprintf("/accounts/%s/access/apps?page=%d&per_page=%d", accountID, page, perPage)
-		if err := c.do(http.MethodGet, path, nil, &apps); err != nil {
-			return "", "", false, fmt.Errorf("looking up access app: %w", err)
+		if a.Name == name && a.Type == "self_hosted" {
+			return a.ID, a.Aud, true, nil
 		}
-		for _, a := range apps {
-			if a.Domain != hostname {
-				continue
-			}
-			if a.Name == name && a.Type == "self_hosted" {
-				return a.ID, a.Aud, true, nil
-			}
-			return "", "", false, fmt.Errorf("an Access application %q already protects %s; delete it or choose a different hostname", a.Name, hostname)
-		}
-		if len(apps) < perPage {
-			break
-		}
+		return "", "", false, fmt.Errorf("an Access application %q already protects %s; delete it or choose a different hostname", a.Name, hostname)
 	}
 	appID, aud, err = c.createAccessApp(accountID, name, hostname)
 	return appID, aud, false, err
@@ -376,7 +458,22 @@ func provisionCloudflare(c *cloudflareClient, cfg cloudflareConfig) (cloudflareR
 	if err != nil {
 		return cloudflareResult{}, err
 	}
-	if err := c.setTunnelIngress(cfg.AccountID, tunnelID, hostname); err != nil {
+	// Writing the routing replaces it wholesale, so on a tunnel that already
+	// exists keep the routes of any apps published through it (expose.go) —
+	// re-running setup must not silently take them offline.
+	rules := []ingressRule{{hostname, tunnelOriginService}}
+	if was {
+		old, err := c.tunnelIngress(cfg.AccountID, tunnelID)
+		if err != nil {
+			return cloudflareResult{}, err
+		}
+		for _, r := range old {
+			if r.Hostname != "" && r.Hostname != hostname {
+				rules = append(rules, r)
+			}
+		}
+	}
+	if err := c.setTunnelRules(cfg.AccountID, tunnelID, rules); err != nil {
 		return cloudflareResult{}, err
 	}
 	was, err = c.ensureDNSRecord(cfg.ZoneID, hostname, tunnelID+".cfargotunnel.com")

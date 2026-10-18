@@ -39,7 +39,7 @@ type fakeTunnel struct {
 	Ingress   []fakeIngressRule
 }
 
-type fakeDNSRecord struct{ Name, Type, Content string }
+type fakeDNSRecord struct{ ID, Name, Type, Content string }
 
 type fakeApp struct{ ID, Name, Domain, Type, Aud string }
 
@@ -58,7 +58,10 @@ type fakeAccount struct {
 	apps     []fakeApp
 	policies map[string][]*fakePolicy // by app ID
 	creates  map[string]int           // "tunnel", "dns", "app", "policy"
+	deletes  map[string]int           // "dns", "app"
 	puts     int                      // ingress configurations written
+	log      []string                 // "METHOD path" of every request, in order
+	nextID   int
 }
 
 func (a *fakeAccount) handler() http.Handler {
@@ -67,6 +70,7 @@ func (a *fakeAccount) handler() http.Handler {
 		return func(w http.ResponseWriter, r *http.Request) {
 			a.mu.Lock()
 			defer a.mu.Unlock()
+			a.log = append(a.log, r.Method+" "+r.URL.Path)
 			f(w, r)
 		}
 	}
@@ -126,7 +130,7 @@ func (a *fakeAccount) handler() http.Handler {
 		out := []map[string]any{}
 		for _, d := range a.dns {
 			if name == "" || d.Name == name {
-				out = append(out, map[string]any{"name": d.Name, "type": d.Type, "content": d.Content})
+				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "type": d.Type, "content": d.Content})
 			}
 		}
 		writeCFSuccess(w, out)
@@ -134,7 +138,8 @@ func (a *fakeAccount) handler() http.Handler {
 	mux.HandleFunc("POST /zones/zone1/dns_records", lock(func(w http.ResponseWriter, r *http.Request) {
 		body := decode(r)
 		a.creates["dns"]++
-		a.dns = append(a.dns, fakeDNSRecord{Name: body["name"].(string), Type: body["type"].(string), Content: body["content"].(string)})
+		a.nextID++
+		a.dns = append(a.dns, fakeDNSRecord{ID: fmt.Sprintf("dns%d", a.nextID), Name: body["name"].(string), Type: body["type"].(string), Content: body["content"].(string)})
 		writeCFSuccess(w, nil)
 	}))
 
@@ -180,12 +185,42 @@ func (a *fakeAccount) handler() http.Handler {
 		}
 		writeCFSuccess(w, nil)
 	}))
+
+	mux.HandleFunc("GET /zones", lock(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("name") != "example.com" {
+			writeCFSuccess(w, []any{})
+			return
+		}
+		writeCFSuccess(w, []any{map[string]any{"id": "zone1", "account": map[string]any{"id": "acct1", "name": "Acct"}}})
+	}))
+	mux.HandleFunc("DELETE /zones/zone1/dns_records/{id}", lock(func(w http.ResponseWriter, r *http.Request) {
+		a.deletes["dns"]++
+		kept := a.dns[:0]
+		for _, d := range a.dns {
+			if d.ID != r.PathValue("id") {
+				kept = append(kept, d)
+			}
+		}
+		a.dns = kept
+		writeCFSuccess(w, nil)
+	}))
+	mux.HandleFunc("DELETE /accounts/acct1/access/apps/{id}", lock(func(w http.ResponseWriter, r *http.Request) {
+		a.deletes["app"]++
+		kept := a.apps[:0]
+		for _, app := range a.apps {
+			if app.ID != r.PathValue("id") {
+				kept = append(kept, app)
+			}
+		}
+		a.apps = kept
+		writeCFSuccess(w, nil)
+	}))
 	return mux
 }
 
 func newFakeAccount(t *testing.T) (*fakeAccount, *cloudflareClient) {
 	t.Helper()
-	acct := &fakeAccount{policies: map[string][]*fakePolicy{}, creates: map[string]int{}}
+	acct := &fakeAccount{policies: map[string][]*fakePolicy{}, creates: map[string]int{}, deletes: map[string]int{}}
 	srv := httptest.NewServer(acct.handler())
 	t.Cleanup(srv.Close)
 	c := newCloudflareClient("test-api-token")

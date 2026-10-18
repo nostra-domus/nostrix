@@ -177,6 +177,60 @@ the temporary first-boot SSH password) so the same form can be reached with no L
 all; connecting a phone to it should pop the OS's captive-portal sign-in prompt
 automatically.
 
+### Adding apps
+
+An app runs under Nostrix through a small contract of ordinary NixOS options, so
+nothing in the app has to know about firewalls or Cloudflare:
+
+```nix
+nostrix.apps.jellyfin = {
+  port   = 8096;
+  expose = "lan";      # "none" (default) | "lan" | "cloudflare"
+};
+```
+
+| `expose` | Who can reach the app |
+|---|---|
+| `none` (default) | Nobody but the device itself. |
+| `lan` | The local network: the port is opened in the firewall. |
+| `cloudflare` | The internet, through the device's Cloudflare Tunnel on its own address `https://<device>-<app>.<your-domain>`, behind Cloudflare Access (only your email). No firewall port is opened. |
+
+**Registering an app.** `nostrix-setup add <flake-url>` (or the web UI's Apps
+page) adds the app's flake as an input and imports its **`nixosModules.nostrix`**,
+the module that runs the app *and* sets `nostrix.apps.<name>`. `add` first checks
+that the flake exports it and says what's missing if not. `nostrix-setup list` and
+`nostrix-setup remove <name>` do the rest. If an app's flake has no
+`nixosModules.nostrix` but its own module is fine, import that one with
+`--module <name>` (for example `--module default`) and declare `nostrix.apps.<name>`
+yourself in `local.nix`. Apps from nixpkgs, such as nginx or Jellyfin, aren't flakes
+at all: enable them in `local.nix` the normal way.
+
+**Your own configuration: `/etc/nixos/local.nix`.** The generated `flake.nix` is
+rewritten whenever you change settings, so don't edit it. If `/etc/nixos/local.nix`
+exists it is imported as an ordinary NixOS module, and everything merges the usual way:
+
+```nix
+{ lib, ... }: {
+  services.nginx.enable = true;
+  nostrix.apps.nginx = { port = 80; expose = "lan"; };
+  nostrix.apps.jellyfin.expose = lib.mkForce "none";   # override an app's own choice
+}
+```
+
+(If you turn `/etc/nixos` into a git repository, `local.nix` has to be tracked, as
+flakes only see tracked files.)
+
+**Publishing through Cloudflare.** Setting `expose = "cloudflare"` only declares
+intent; Nix can't create tunnel routes or DNS records. After the switch, run
+`nostrix-setup expose` (or use **Publish** on the Apps page). It reads what the running
+system declares (`/etc/nostrix/apps.json`) and makes Cloudflare match: each published
+app gets an Access application and policy first, then its DNS record and tunnel route,
+so it is never reachable unprotected; an app that is no longer set to `cloudflare` is
+taken down again. It needs a Cloudflare API token **every time** (from
+`$CLOUDFLARE_API_TOKEN` or a prompt) — the device never stores one — and only ever
+touches this device's own tunnel and the hostnames that tunnel routed.
+`--dry-run` shows the plan without contacting Cloudflare.
+
 ### Preparing Cloudflare values
 
 The wizard and bootstrap form's optional Cloudflare remote access needs an API token,

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -173,5 +174,148 @@ func TestOverlappingRebuildIsIgnored(t *testing.T) {
 	calls := rec.recorded()
 	if len(calls) != 1 || calls[0].content != "first" {
 		t.Errorf("calls = %+v, want only the first rebuild to run", calls)
+	}
+}
+
+func TestHandleAppsAddsAnAppThatPassesTheCheck(t *testing.T) {
+	srv, rec := newTestServer(t)
+	if err := saveState(srv.stateFile, state{Hostname: "testhost"}); err != nil {
+		t.Fatal(err)
+	}
+	var checked [2]string
+	srv.checkAppFn = func(u, m string) error { checked = [2]string{u, m}; return nil }
+
+	w := postForm(srv.handleApps, "/apps", url.Values{"url": {"github:org/jelly"}, "module": {"default"}})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d: %s", w.Code, w.Body.String())
+	}
+	if checked != [2]string{"github:org/jelly", "default"} {
+		t.Errorf("check ran with %v", checked)
+	}
+	s, _ := loadState(srv.stateFile)
+	if len(s.Apps) != 1 || s.Apps[0].Name != "jelly" || s.Apps[0].Module != "default" {
+		t.Errorf("state apps = %+v", s.Apps)
+	}
+	waitIdle(t, srv)
+	if calls := rec.recorded(); len(calls) != 1 || !strings.Contains(calls[0].content, "inputs.jelly.nixosModules.default") {
+		t.Errorf("the applied flake should import the chosen module: %+v", calls)
+	}
+}
+
+func TestHandleAppsRejectsAnAppThatFailsTheCheck(t *testing.T) {
+	srv, rec := newTestServer(t)
+	if err := saveState(srv.stateFile, state{Hostname: "testhost"}); err != nil {
+		t.Fatal(err)
+	}
+	srv.checkAppFn = func(u, m string) error { return errors.New("no nixosModules.nostrix") }
+
+	w := postForm(srv.handleApps, "/apps", url.Values{"url": {"github:org/jelly"}})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "no nixosModules.nostrix") {
+		t.Fatalf("expected 400 with the reason, got %d: %s", w.Code, w.Body.String())
+	}
+	if s, _ := loadState(srv.stateFile); len(s.Apps) != 0 {
+		t.Errorf("a rejected app must not be saved: %+v", s.Apps)
+	}
+	waitIdle(t, srv)
+	if calls := rec.recorded(); len(calls) != 0 {
+		t.Errorf("a rejected app must not trigger a rebuild: %+v", calls)
+	}
+}
+
+// exposeServer is a configured device (tunnel set up) with one app that
+// declares expose = "cloudflare", backed by the fake Cloudflare account.
+func exposeServer(t *testing.T) (*server, *fakeAccount, *string) {
+	t.Helper()
+	srv, _ := newTestServer(t)
+	acct, client := provisioned(t)
+
+	appsFile := filepath.Join(t.TempDir(), "apps.json")
+	if err := os.WriteFile(appsFile, []byte(`{"jelly":{"port":8096,"expose":"cloudflare"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv.appsFile = appsFile
+	var tokenUsed string
+	srv.cfClientFn = func(token string) *cloudflareClient { tokenUsed = token; return client }
+
+	if err := saveState(srv.stateFile, state{
+		Hostname: "pi-test", OwnerEmail: "owner@example.com",
+		CloudflareBaseDomain: "example.com", CloudflareTunnelToken: "tunnel-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return srv, acct, &tokenUsed
+}
+
+func TestHandleAppsExposePublishesWithTheSuppliedToken(t *testing.T) {
+	srv, acct, tokenUsed := exposeServer(t)
+
+	w := postForm(srv.handleAppsExpose, "/apps/expose", url.Values{"apiToken": {"SECRET-TOKEN-123"}})
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, "published jelly at https://pi-test-jelly.example.com") {
+		t.Fatalf("status %d, body:\n%s", w.Code, body)
+	}
+	if *tokenUsed != "SECRET-TOKEN-123" {
+		t.Errorf("the Cloudflare client was built with %q", *tokenUsed)
+	}
+	if got := acct.tunnels[0].Ingress; len(got) != 3 || got[1].Service != "http://127.0.0.1:8096" {
+		t.Errorf("tunnel ingress = %+v", got)
+	}
+
+	// The token is used once and goes nowhere else.
+	if strings.Contains(body, "SECRET-TOKEN-123") {
+		t.Error("the response page echoes the API token")
+	}
+	if raw, _ := os.ReadFile(srv.stateFile); strings.Contains(string(raw), "SECRET-TOKEN-123") {
+		t.Error("the API token was written to the state file")
+	}
+}
+
+func TestHandleAppsExposeNeedsAToken(t *testing.T) {
+	srv, acct, tokenUsed := exposeServer(t)
+	acct.log = nil
+
+	w := postForm(srv.handleAppsExpose, "/apps/expose", url.Values{})
+	if !strings.Contains(w.Body.String(), "API token") || *tokenUsed != "" || len(acct.log) != 0 {
+		t.Errorf("without a token nothing may be contacted; body:\n%s\nlog: %v", w.Body.String(), acct.log)
+	}
+}
+
+func TestHandleAppsExposeRequiresCloudflareToBeSetUp(t *testing.T) {
+	srv, _, tokenUsed := exposeServer(t)
+	if err := saveState(srv.stateFile, state{Hostname: "pi-test"}); err != nil {
+		t.Fatal(err)
+	}
+	w := postForm(srv.handleAppsExpose, "/apps/expose", url.Values{"apiToken": {"x"}})
+	if !strings.Contains(w.Body.String(), "set up on this device") || *tokenUsed != "" {
+		t.Errorf("want a clear 'not set up' message and no API use; body:\n%s", w.Body.String())
+	}
+}
+
+func TestHandleAppsExposeRemembersTheBaseDomain(t *testing.T) {
+	srv, _, _ := exposeServer(t)
+	if err := saveState(srv.stateFile, state{Hostname: "pi-test", OwnerEmail: "owner@example.com", CloudflareTunnelToken: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	w := postForm(srv.handleAppsExpose, "/apps/expose", url.Values{"apiToken": {"x"}, "baseDomain": {"example.com"}})
+	if !strings.Contains(w.Body.String(), "published jelly") {
+		t.Fatalf("body:\n%s", w.Body.String())
+	}
+	if s, _ := loadState(srv.stateFile); s.CloudflareBaseDomain != "example.com" {
+		t.Errorf("base domain not remembered: %+v", s)
+	}
+}
+
+func TestAppsPageListsWhatIsDeclared(t *testing.T) {
+	srv, _, _ := exposeServer(t)
+	w := httptest.NewRecorder()
+	srv.handleApps(w, httptest.NewRequest(http.MethodGet, "/apps", nil))
+	body := w.Body.String()
+	for _, want := range []string{"jelly", "8096", "cloudflare", "https://pi-test-jelly.example.com", "Publish"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Apps page is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "tunnel-token") {
+		t.Error("the Apps page leaks the tunnel token")
 	}
 }

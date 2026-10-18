@@ -196,3 +196,42 @@ func TestGenerateUsesQemuVMHardware(t *testing.T) {
 		t.Errorf("generated flake does not use the qemuVM profile:\n%s", flake)
 	}
 }
+
+func TestGenerateImportsTheNostrixModuleByDefault(t *testing.T) {
+	flake, err := generate(state{Hostname: "h", Apps: []app{{Name: "jelly", URL: "github:org/jelly"}}})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if !strings.Contains(flake, "inputs.jelly.nixosModules.nostrix") || strings.Contains(flake, "nixosModules.default") {
+		t.Errorf("an app should be imported through nixosModules.nostrix:\n%s", flake)
+	}
+}
+
+func TestGenerateImportsAnExplicitModule(t *testing.T) {
+	flake, err := generate(state{Hostname: "h", Apps: []app{{Name: "jelly", URL: "github:org/jelly", Module: "default"}}})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if !strings.Contains(flake, "inputs.jelly.nixosModules.default") {
+		t.Errorf("--module default should be honoured:\n%s", flake)
+	}
+}
+
+func TestGenerateRejectsAnUnsafeModuleName(t *testing.T) {
+	_, err := generate(state{Hostname: "h", Apps: []app{{Name: "x", URL: "github:o/x", Module: "a b"}}})
+	if err == nil {
+		t.Error("expected generate to refuse a module name that can't be spliced safely")
+	}
+}
+
+// local.nix is the user's hand-written module; the generated flake must pick
+// it up when present and never require it.
+func TestGenerateIncludesLocalNixWhenPresent(t *testing.T) {
+	flake, err := generate(state{Hostname: "h"})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if !strings.Contains(flake, "builtins.pathExists ./local.nix") {
+		t.Errorf("generated flake does not pick up local.nix:\n%s", flake)
+	}
+}

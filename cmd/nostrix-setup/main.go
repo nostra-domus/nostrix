@@ -31,6 +31,15 @@ func main() {
 		case "add":
 			runAdd(os.Args[2:])
 			return
+		case "expose":
+			runExpose(os.Args[2:])
+			return
+		case "list":
+			runList(os.Args[2:])
+			return
+		case "remove":
+			runRemove(os.Args[2:])
+			return
 		case "serve":
 			runServe(os.Args[2:])
 			return
@@ -48,7 +57,12 @@ func main() {
 func printUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  nostrix-setup              — interactive setup wizard")
-	fmt.Println("  nostrix-setup add <url>    — register an app")
+	fmt.Println("  nostrix-setup add <url>    — register an app (its flake must export nixosModules.nostrix;")
+	fmt.Println("                               --module <name> imports another module instead, --no-check skips the check)")
+	fmt.Println("  nostrix-setup list         — list registered apps")
+	fmt.Println("  nostrix-setup remove <name> — unregister an app")
+	fmt.Println("  nostrix-setup expose       — publish apps with expose = \"cloudflare\" (token from $CLOUDFLARE_API_TOKEN or a prompt;")
+	fmt.Println("                               used once, never stored; --dry-run shows the plan)")
 	fmt.Println("  nostrix-setup serve        — run the web configuration UI")
 	fmt.Println("  nostrix-setup cloudflare   — look up Cloudflare IDs and check API token permissions")
 	fmt.Println("                               (--domain example.com, --json; uses $CLOUDFLARE_API_TOKEN, else the")

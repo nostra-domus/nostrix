@@ -5,6 +5,7 @@
 {
   imports = [
     ./base.nix
+    ./apps.nix
     ./mdns.nix
     ./web.nix
     ./multi-homed-routing.nix

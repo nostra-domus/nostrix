@@ -451,6 +451,62 @@ shared `apply()`).
 
 ---
 
+## Apps contract and Cloudflare exposure
+
+**Status: implemented; verified in the test VM and by unit tests; the Cloudflare half is
+not yet verified against a live account (2026-10-18).**
+
+Design (decided in discussion): every app runs under Nostrix through a small contract of
+ordinary NixOS options, not through per-app glue code.
+- `modules/apps.nix` declares `nostrix.apps.<name> = { port; expose = "none" | "lan" |
+  "cloudflare"; }`, default `none`. `lan` opens the firewall port; `cloudflare` opens nothing
+  (origin is `127.0.0.1:<port>`). The module also writes `/etc/nostrix/apps.json` so the tool
+  reads the *running* system's declarations without evaluating Nix on the device.
+- `nostrix-setup add <url>` imports the app's **`nixosModules.nostrix`** (a named NixOS module
+  — a custom top-level flake output would warn "unknown flake output"). It pre-checks the flake
+  with `nix eval` and explains what's missing; `--module <name>` imports a different module
+  (e.g. `default`) when the user will declare `nostrix.apps.<name>` themselves; `--no-check`
+  skips the check. `list` / `remove` mirror the web UI.
+- Hand-written config goes in `/etc/nixos/local.nix`, an ordinary NixOS module the generated
+  flake imports when present. Nothing new was invented: no config file format.
+- `nostrix-setup expose` and the Apps page's **Publish** button reconcile Cloudflare with
+  `apps.json`: per `cloudflare` app an owner-only Access app + policy, a DNS CNAME and a tunnel
+  route at `https://<device>-<app>.<domain>` (one DNS label: I believe Cloudflare's free
+  certificate covers only one subdomain level — not verified). Access app and policy are created
+  *before* DNS and the route, and removed *after* them, so an app is never reachable
+  unprotected. Cleanup only considers hostnames that this device's own tunnel routed, and deletes
+  a DNS record / Access app only if it still looks like ours. The API token is asked for on every
+  run and never stored (decision: ask each time). `provisionCloudflare` preserves existing app
+  routes when it rewrites the tunnel.
+
+**Verified:** Go unit tests with a stateful fake Cloudflare (publish, idempotent re-run, take-down,
+refusing foreign resources, leaving repointed records alone, call ordering, token not echoed or
+persisted); `checks.x86_64-linux.appsContract` (firewall follows `expose`, `apps.json` content, a
+mutation of the module is caught); in a VM: refusal of a flake with no `nixosModules.nostrix`,
+`--module default`, a real `add` that opened only the declared `lan` port, a `local.nix`
+override that closed it again with the service still running, `list`/`remove`, `apps.json` on the
+running system, no firewall port for a `cloudflare` app, and `expose --dry-run`'s plan.
+
+**Not yet verified / open:**
+- **Live Cloudflare run.** `reconcileExposure` has only run against the fake. The API calls
+  (Access app list/delete, DNS delete, tunnel configuration read/write with several routes) follow
+  my understanding of the API. Needs one real run: `add` an app with `expose = "cloudflare"`, then
+  `nostrix-setup expose`, then check the address answers with the Access login and that setting the
+  app back to `lan`/`none` and re-running removes it.
+- **Apps don't verify the Access JWT** (only `nostrix-web` does). They are protected at
+  Cloudflare's edge and reachable on `127.0.0.1` only, so anything running on the device can bypass
+  Access. Probably fine for a single-user device; worth stating if that changes.
+- **One policy shape**: every published app allows only the owner email. No per-app allow lists.
+- **No curated adapters yet.** The plan had a few ready-made `nixosModules.nostrix`-style modules
+  for common nixpkgs services; deliberately skipped for now. Until then those are enabled in
+  `local.nix` together with a `nostrix.apps.<name>` entry.
+- **Publishing is a separate step** after the switch (it's an API call, not Nix), so there's a
+  window where an app declared `cloudflare` has no address yet. The Apps page shows the intended
+  address but not whether it is live.
+- `add` needs network (or `--no-check`) for the pre-check.
+
+---
+
 ## Bake `nostrix-setup` into the SD card image
 
 **Status: done (2026-10-18).** `modules/web.nix` now adds the `nostrix-setup` package it
@@ -564,6 +620,12 @@ done for Cloudflare/WiFi.
 ---
 
 ## Implement or retire the `config.yaml` app convention
+
+**Status: resolved (2026-10-18) by retiring it — see "Apps contract and Cloudflare exposure"
+below.** `add` no longer creates `/etc/nostrix/<name>/` or prints the config.yaml message
+(nothing ever read that file), the CLI gained `list` and `remove` for parity with the web UI,
+and app configuration is ordinary NixOS options, with hand-written config in
+`/etc/nixos/local.nix`. The original write-up follows for history.
 
 **Context:** `nostrix-setup add <git-url>` (`cmd/nostrix-setup/add.go`) creates
 `/etc/nostrix/<name>/` and prints "Place your config.yaml there before the service will

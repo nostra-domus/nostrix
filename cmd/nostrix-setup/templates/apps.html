@@ -17,11 +17,12 @@
 <nav><a href="/">Status</a> <a href="/setup">Setup</a> <a href="/apps">Apps</a></nav>
 <h1>Apps</h1>
 <table>
-<tr><th>Name</th><th>URL</th><th></th></tr>
+<tr><th>Name</th><th>URL</th><th>Module</th><th></th></tr>
 {{range .State.Apps}}
 <tr>
   <td>{{.Name}}</td>
   <td>{{.URL}}</td>
+  <td>{{if .Module}}{{.Module}}{{else}}nostrix{{end}}</td>
   <td>
     <form method="post" action="/apps/remove" style="margin:0">
       <input type="hidden" name="name" value="{{.Name}}">
@@ -30,14 +31,39 @@
   </td>
 </tr>
 {{else}}
-<tr><td colspan="3">No apps registered.</td></tr>
+<tr><td colspan="4">No apps registered.</td></tr>
 {{end}}
 </table>
 
 <form class="add" method="post" action="/apps">
   <input type="text" name="url" placeholder="github:org/repo" required>
+  <input type="text" name="module" placeholder="module (default: nostrix)" style="flex:0 0 11rem">
   <button type="submit">Add</button>
 </form>
+
+<h2>Declared by the running system</h2>
+<p><small>What each app's module says about itself (<code>nostrix.apps</code>). Change it in the app's module or in <code>/etc/nixos/local.nix</code>.</small></p>
+<table>
+<tr><th>App</th><th>Port</th><th>Exposure</th><th>Address</th></tr>
+{{range .Declared}}
+<tr><td>{{.Name}}</td><td>{{.Port}}</td><td>{{.Expose}}</td><td>{{if .URL}}{{.URL}}{{end}}</td></tr>
+{{else}}
+<tr><td colspan="4">No apps declare anything yet.</td></tr>
+{{end}}
+</table>
+
+{{if .Notice}}<p style="background:#e6f4ea;padding:0.5rem">{{.Notice}}</p>{{end}}
+{{if .Problem}}<p style="background:#fdecea;padding:0.5rem">{{.Problem}}</p>{{end}}
+
+{{if .State.CloudflareTunnelToken}}
+<h2>Publish through Cloudflare</h2>
+<p><small>Makes Cloudflare match the table above: apps set to <code>cloudflare</code> get an address behind Cloudflare Access (only your email), and apps no longer set to it are taken down. The API token is used for this request only and is not stored.</small></p>
+<form class="add" method="post" action="/apps/expose">
+  <input type="password" name="apiToken" placeholder="Cloudflare API token" autocomplete="off" required>
+  {{if not .State.CloudflareBaseDomain}}<input type="text" name="baseDomain" placeholder="base domain, e.g. example.com" required>{{end}}
+  <button type="submit">Publish</button>
+</form>
+{{end}}
 </body>
 </html>
 {{end}}

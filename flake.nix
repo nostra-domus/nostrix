@@ -187,6 +187,42 @@
         };
       };
 
+      # Contract test for modules/apps.nix (`nostrix.apps.<name>`): evaluates
+      # a system and asserts the firewall follows `expose` — only "lan" opens
+      # a port, "none" (the default) and "cloudflare" never do — and that
+      # exposing without a port is rejected. Pure evaluation, so it runs under
+      # `nix flake check` without booting anything.
+      # Run with: nix build .#checks.x86_64-linux.appsContract
+      appsContractTest =
+        let
+          pkgs = nixpkgs.legacyPackages.x86_64-linux;
+          eval = apps: (nixpkgs.lib.nixosSystem {
+            system  = "x86_64-linux";
+            modules = [ ./modules/apps.nix { nostrix.apps = apps; } ];
+          }).config;
+          ports = c: c.networking.firewall.allowedTCPPorts;
+          mixed = eval {
+            lan  = { port = 8096; expose = "lan"; };
+            tun  = { port = 9100; expose = "cloudflare"; };
+            off  = { port = 9000; expose = "none"; };
+            dflt = { port = 9200; };
+          };
+          declared = builtins.fromJSON mixed.environment.etc."nostrix/apps.json".text;
+          failing = builtins.filter (a: !a.assertion && nixpkgs.lib.hasPrefix "nostrix.apps." a.message)
+            (eval { broken = { expose = "lan"; }; }).assertions;
+        in
+        assert builtins.elem 8096 (ports mixed);
+        assert !(builtins.elem 9100 (ports mixed));
+        assert !(builtins.elem 9000 (ports mixed));
+        assert !(builtins.elem 9200 (ports mixed));
+        # apps.json is what `nostrix-setup expose` reconciles Cloudflare against.
+        assert declared.tun == { port = 9100; expose = "cloudflare"; };
+        assert declared.dflt == { port = 9200; expose = "none"; };
+        assert builtins.attrNames declared == [ "dflt" "lan" "off" "tun" ];
+        assert builtins.length failing == 1;
+        assert nixpkgs.lib.hasInfix "needs a port" (builtins.head failing).message;
+        pkgs.runCommand "nostrix-apps-contract" { } "touch $out";
+
       # Integration test: boots the base nostrix stack and verifies
       # nginx serves content, SSH is hardened, and the hostname is correct.
       # Run with: nix build .#checks.x86_64-linux.integration
@@ -374,5 +410,6 @@
     nixosOutputs // perSystemOutputs // {
       checks.x86_64-linux.integration = integrationTest;
       checks.x86_64-linux.apPortal    = apPortalTest;
+      checks.x86_64-linux.appsContract = appsContractTest;
     };
 }

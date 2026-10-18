@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -14,10 +13,12 @@ func runAdd(args []string) {
 	output := fs.String("output", "/etc/nixos/flake.nix", "path to the flake.nix")
 	stateFile := fs.String("state", "/etc/nostrix/state.json", "path to the state file")
 	dryRun := fs.Bool("dry-run", false, "print changes without applying")
+	module := fs.String("module", "", "nixosModules attribute to import (default: "+defaultAppModule+")")
+	noCheck := fs.Bool("no-check", false, "skip checking that the flake exports the module (e.g. offline)")
 	fs.Parse(args) //nolint:errcheck
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "usage: nostrix-setup add <git-url>")
+		fmt.Fprintln(os.Stderr, "usage: nostrix-setup add [--module <name>] <flake-url>")
 		os.Exit(1)
 	}
 	rawURL := fs.Arg(0)
@@ -29,10 +30,17 @@ func runAdd(args []string) {
 		os.Exit(1)
 	}
 
-	name, err := addApp(&s, rawURL)
+	name, err := addApp(&s, rawURL, *module)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
+	}
+	if !*noCheck {
+		fmt.Printf("Checking that %s exports nixosModules.%s ...\n", rawURL, s.Apps[len(s.Apps)-1].moduleName())
+		if err := checkAppFlake(realNixRunner, rawURL, *module); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	flake, err := generate(s)
@@ -52,13 +60,8 @@ func runAdd(args []string) {
 		return
 	}
 
-	configDir := filepath.Join("/etc/nostrix", name)
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not create %s: %v\n", configDir, err)
-	} else {
-		fmt.Printf("Created %s\n", configDir)
-		fmt.Printf("Place your config.yaml there before the service will start.\n\n")
-	}
+	fmt.Printf("Configure %s with ordinary NixOS options in /etc/nixos/local.nix\n", name)
+	fmt.Printf("(e.g. nostrix.apps.%s = { port = ...; expose = \"lan\"; };).\n\n", name)
 
 	if err := saveState(*stateFile, s); err != nil {
 		fmt.Fprintf(os.Stderr, "error: could not save state: %v\n", err)
@@ -70,10 +73,80 @@ func runAdd(args []string) {
 	}
 }
 
-// addApp registers a new app in s, deriving its name from rawURL. Fails if
-// the URL can't be parsed or the derived name is already registered.
-// Returns the derived name on success.
-func addApp(s *state, rawURL string) (string, error) {
+// runList prints the registered apps.
+func runList(args []string) {
+	fs := flag.NewFlagSet("list", flag.ExitOnError)
+	stateFile := fs.String("state", "/etc/nostrix/state.json", "path to the state file")
+	fs.Parse(args) //nolint:errcheck
+
+	s, err := loadState(*stateFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: could not load state from %s: %v\n", *stateFile, err)
+		os.Exit(1)
+	}
+	if len(s.Apps) == 0 {
+		fmt.Println("No apps registered.")
+		return
+	}
+	for _, a := range s.Apps {
+		fmt.Printf("%-20s %s  (nixosModules.%s)\n", a.Name, a.URL, a.moduleName())
+	}
+}
+
+// runRemove unregisters an app and applies the result.
+func runRemove(args []string) {
+	fs := flag.NewFlagSet("remove", flag.ExitOnError)
+	output := fs.String("output", "/etc/nixos/flake.nix", "path to the flake.nix")
+	stateFile := fs.String("state", "/etc/nostrix/state.json", "path to the state file")
+	dryRun := fs.Bool("dry-run", false, "print changes without applying")
+	fs.Parse(args) //nolint:errcheck
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: nostrix-setup remove <name>")
+		os.Exit(1)
+	}
+	name := fs.Arg(0)
+
+	s, err := loadState(*stateFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: could not load state from %s: %v\n", *stateFile, err)
+		os.Exit(1)
+	}
+	if !removeApp(&s, name) {
+		fmt.Fprintf(os.Stderr, "error: no app named %q (see: nostrix-setup list)\n", name)
+		os.Exit(1)
+	}
+	flake, err := generate(s)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Removing app %q\n\n", name)
+	fmt.Println(strings.Repeat("─", 60))
+	fmt.Print(flake)
+	fmt.Println(strings.Repeat("─", 60))
+	fmt.Println()
+
+	if *dryRun {
+		fmt.Println("Dry run — nothing written.")
+		return
+	}
+	if err := saveState(*stateFile, s); err != nil {
+		fmt.Fprintf(os.Stderr, "error: could not save state: %v\n", err)
+		os.Exit(1)
+	}
+	if err := apply(*output, flake, false); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// addApp registers a new app in s, deriving its name from rawURL. module is
+// which nixosModules attribute to import ("" for the default, "nostrix").
+// Fails if the URL can't be parsed or the derived name is already
+// registered. Returns the derived name on success.
+func addApp(s *state, rawURL, module string) (string, error) {
 	name, err := appNameFromURL(rawURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid URL %q: %w", rawURL, err)
@@ -81,12 +154,15 @@ func addApp(s *state, rawURL string) (string, error) {
 	if !validIdentifier(name) {
 		return "", fmt.Errorf("app name %q derived from %q is not safe to use: must start with a letter and contain only letters, digits, hyphens, and underscores", name, rawURL)
 	}
+	if module != "" && !moduleNameRe.MatchString(module) {
+		return "", fmt.Errorf("invalid module name %q: must start with a letter or underscore and contain only letters, digits, hyphens, and underscores", module)
+	}
 	for _, a := range s.Apps {
 		if a.Name == name {
 			return "", fmt.Errorf("app %q is already registered", name)
 		}
 	}
-	s.Apps = append(s.Apps, app{Name: name, URL: rawURL})
+	s.Apps = append(s.Apps, app{Name: name, URL: rawURL, Module: module})
 	return name, nil
 }
 

@@ -7,7 +7,6 @@ import (
 	"html/template"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -36,6 +35,17 @@ type server struct {
 	// apply (nixos-rebuild); tests inject a stub so they never shell out.
 	applyFn func(path, content string, upgradeAll bool) error
 
+	// checkAppFn verifies a flake exports the module an app will import.
+	// Nil means the real check (runs nix, may touch the network); tests
+	// inject a stub.
+	checkAppFn func(rawURL, module string) error
+
+	// appsFile is the declared-apps file (default /etc/nostrix/apps.json) and
+	// cfClientFn builds the Cloudflare client for a token; both are
+	// overridable so tests use a temp file and a fake API.
+	appsFile   string
+	cfClientFn func(token string) *cloudflareClient
+
 	mu         sync.Mutex
 	rebuilding bool
 	lastError  string
@@ -45,7 +55,15 @@ type pageData struct {
 	State      state
 	Rebuilding bool
 	LastError  string
+
+	// Apps page only.
+	Declared []declaredView // what the running system declares (apps.json)
+	Notice   string         // result of the last publish
+	Problem  string         // why the last publish failed
 }
+
+// declaredView is one declared app as the Apps page shows it.
+type declaredView struct{ Name, Port, Expose, URL string }
 
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
@@ -106,6 +124,7 @@ func runServe(args []string) {
 	mux.HandleFunc("/setup", srv.handleSetup)
 	mux.HandleFunc("/apps", srv.handleApps)
 	mux.HandleFunc("/apps/remove", srv.handleAppRemove)
+	mux.HandleFunc("/apps/expose", srv.handleAppsExpose)
 	mux.HandleFunc("/rebuild", srv.handleRebuild)
 
 	fmt.Printf("Nostrix web UI listening on http://%s\n", *addr)
@@ -179,6 +198,7 @@ func (srv *server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 			srv.render(w, "bootstrap", pageData{State: s, LastError: "Cloudflare setup failed: " + err.Error()})
 			return
 		}
+		s.CloudflareBaseDomain = cfCfg.BaseDomain
 		s.CloudflareTeamDomain = result.TeamDomain
 		s.CloudflareAud = result.Aud
 		s.CloudflareTunnelToken = result.TunnelToken
@@ -245,15 +265,18 @@ func (srv *server) handleApps(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rawURL := strings.TrimSpace(r.FormValue("url"))
-		name, err := addApp(&s, rawURL)
-		if err != nil {
+		module := strings.TrimSpace(r.FormValue("module"))
+		if _, err := addApp(&s, rawURL, module); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-
-		configDir := filepath.Join("/etc/nostrix", name)
-		if err := os.MkdirAll(configDir, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not create %s: %v\n", configDir, err)
+		check := srv.checkAppFn
+		if check == nil {
+			check = func(u, m string) error { return checkAppFlake(realNixRunner, u, m) }
+		}
+		if err := check(rawURL, module); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 
 		if err := srv.applyState(s); err != nil {
@@ -264,7 +287,7 @@ func (srv *server) handleApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv.render(w, "apps", pageData{State: s})
+	srv.render(w, "apps", srv.appsPage(s))
 }
 
 func (srv *server) handleAppRemove(w http.ResponseWriter, r *http.Request) {

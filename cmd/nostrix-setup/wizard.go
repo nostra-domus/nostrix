@@ -125,6 +125,7 @@ func promptCloudflare(r *bufio.Reader, s *state) error {
 		return fmt.Errorf("Cloudflare setup failed: %w", err)
 	}
 
+	s.CloudflareBaseDomain = cfg.BaseDomain
 	s.CloudflareTeamDomain = result.TeamDomain
 	s.CloudflareAud = result.Aud
 	s.CloudflareTunnelToken = result.TunnelToken

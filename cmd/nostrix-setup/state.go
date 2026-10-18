@@ -25,7 +25,11 @@ type state struct {
 	// deliberately not one of these fields — it's used transiently to call
 	// the Cloudflare API (see cloudflare.go) and is never persisted here or
 	// written into the generated flake, only its narrower-scoped result is.
-	OwnerEmail            string `json:"ownerEmail,omitempty"`
+	OwnerEmail string `json:"ownerEmail,omitempty"`
+	// CloudflareBaseDomain is the domain the device (and every app it
+	// publishes) lives under. Kept so exposing an app later needs only an API
+	// token, not the setup answers again.
+	CloudflareBaseDomain  string `json:"cloudflareBaseDomain,omitempty"`
 	CloudflareTeamDomain  string `json:"cloudflareTeamDomain,omitempty"`
 	CloudflareAud         string `json:"cloudflareAud,omitempty"`
 	CloudflareTunnelToken string `json:"cloudflareTunnelToken,omitempty"`
@@ -34,6 +38,24 @@ type state struct {
 type app struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
+
+	// Module is which of the flake's nixosModules to import; empty means
+	// the default, "nostrix" (see defaultAppModule). Set it to use an app
+	// whose flake has no nostrix-adapted module: import its own module
+	// (e.g. "default") and declare nostrix.apps.<name> in /etc/nixos/local.nix.
+	Module string `json:"module,omitempty"`
+}
+
+// defaultAppModule is the nixosModules attribute apps are expected to export
+// to run under Nostrix; it sets nostrix.apps.<name> (modules/apps.nix).
+const defaultAppModule = "nostrix"
+
+// moduleName is the nixosModules attribute to import for a.
+func (a app) moduleName() string {
+	if a.Module == "" {
+		return defaultAppModule
+	}
+	return a.Module
 }
 
 func loadState(path string) (state, error) {

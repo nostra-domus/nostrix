@@ -29,6 +29,9 @@ func generate(s state) (string, error) {
 		return "", fmt.Errorf("invalid hostname %q: must start with a letter and contain only letters, digits, hyphens, and underscores", s.Hostname)
 	}
 	for _, a := range s.Apps {
+		if a.Module != "" && !moduleNameRe.MatchString(a.Module) {
+			return "", fmt.Errorf("invalid module name %q for app %q", a.Module, a.Name)
+		}
 		if !validIdentifier(a.Name) {
 			return "", fmt.Errorf("invalid app name %q: must start with a letter and contain only letters, digits, hyphens, and underscores", a.Name)
 		}
@@ -81,7 +84,11 @@ func generate(s state) (string, error) {
 	w("        { system.stateVersion = \"25.11\"; }\n")
 
 	for _, a := range s.Apps {
-		f("        inputs.%s.nixosModules.default\n", a.Name)
+		// nixosModules.nostrix, not .default: the app's own entry point
+		// for running under Nostrix (it sets nostrix.apps.<name> — see
+		// modules/apps.nix). `default` is whatever the app's author means by
+		// it, and is not adapted for this device.
+		f("        inputs.%s.nixosModules.%s\n", a.Name, a.moduleName())
 	}
 
 	if s.NginxEnable {
@@ -114,7 +121,11 @@ func generate(s state) (string, error) {
 			escapeNixString(s.CloudflareTeamDomain), escapeNixString(s.CloudflareAud))
 	}
 
-	w("      ];\n")
+	// /etc/nixos/local.nix is the place for hand-written configuration:
+	// an ordinary NixOS module, picked up whenever it exists. This file is
+	// regenerated from state on every change, so edits made here would be
+	// lost; local.nix is never touched.
+	w("      ] ++ (if builtins.pathExists ./local.nix then [ ./local.nix ] else [ ]);\n")
 	w("    };\n")
 	w("  };\n")
 	w("}\n")
