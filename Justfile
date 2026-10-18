@@ -94,15 +94,16 @@ vm-restore:
     ssh=(sshpass -p nostrix ssh {{ vm_ssh_opts }} root@localhost)
     for _ in $(seq 1 90); do "${ssh[@]}" true 2>/dev/null && break; sleep 3; done
     "${ssh[@]}" true 2>/dev/null || { echo "vm-restore: the VM never became reachable"; exit 1; }
-    if "${ssh[@]}" 'test -e /etc/nostrix/state.json'; then
+    if "${ssh[@]}" 'test -s /etc/nostrix/state.json && test -s /etc/nixos/flake.lock'; then
         echo "vm-restore: the VM is already set up; leaving it alone."
         exit 0
     fi
     name=$(sed -n 's/.*nixosConfigurations\.\([A-Za-z0-9_-]*\) *=.*/\1/p' .vm-cloudflare/flake.nix | head -1)
     [ -n "$name" ] || { echo "vm-restore: no configuration name in the saved flake.nix"; exit 1; }
     echo "vm-restore: restoring the saved Cloudflare setup as #$name"
-    # No flake.lock on purpose: the old one pins the previous build's source.
-    "${ssh[@]}" 'mkdir -p /etc/nostrix /etc/nixos && cat > /etc/nostrix/state.json' < .vm-cloudflare/state.json &&
+    # No flake.lock on purpose: the old one pins the previous build's source, and a fresh image's
+    # empty placeholder isn't valid JSON, so remove it and let Nix create one.
+    "${ssh[@]}" 'mkdir -p /etc/nostrix /etc/nixos && rm -f /etc/nixos/flake.lock && cat > /etc/nostrix/state.json' < .vm-cloudflare/state.json &&
     "${ssh[@]}" 'cat > /etc/nixos/flake.nix' < .vm-cloudflare/flake.nix &&
     "${ssh[@]}" "systemd-run --collect --wait --unit=nostrix-restore --setenv=PATH=/run/wrappers/bin:/run/current-system/sw/bin nixos-rebuild switch --flake /etc/nixos#$name" &&
     echo "vm-restore: done" || { echo "vm-restore: failed (journalctl -u nostrix-restore in the VM)"; exit 1; }
