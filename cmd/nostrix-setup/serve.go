@@ -32,6 +32,10 @@ type server struct {
 	// of those images.
 	hardware string
 
+	// applyFn writes the generated flake and applies it. Nil means the real
+	// apply (nixos-rebuild); tests inject a stub so they never shell out.
+	applyFn func(path, content string, upgradeAll bool) error
+
 	mu         sync.Mutex
 	rebuilding bool
 	lastError  string
@@ -329,10 +333,14 @@ func (srv *server) rebuildAsync(flake string, upgradeAll bool) {
 	}
 	srv.rebuilding = true
 	srv.lastError = ""
+	doApply := srv.applyFn
+	if doApply == nil {
+		doApply = apply
+	}
 	srv.mu.Unlock()
 
 	go func() {
-		err := apply(srv.output, flake, upgradeAll)
+		err := doApply(srv.output, flake, upgradeAll)
 
 		srv.mu.Lock()
 		srv.rebuilding = false

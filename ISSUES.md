@@ -248,7 +248,8 @@ genuinely no ethernet device, matching an unplugged Pi.
   `TestHandleSetupPersistsWifi` races `t.TempDir()` cleanup against a background
   `nixos-rebuild` goroutine from `rebuildAsync`/`applyState`, occasionally failing
   with "directory not empty" — reproduces on `main` too, not caused by this change,
-  not fixed here.)
+  not fixed here. **Fixed 2026-10-18:** the root cause was that test running a real
+  `nixos-rebuild`; see the Go test coverage bullet under "Other gaps".)
 - `nix flake check` — passes, including the new `nixosModules.apPortal` eval.
 - `nix eval` against a scratch flake importing `nostrix.nixosModules.apPortal`
   confirmed the hostapd SSID, dnsmasq/firewall config, and wlan0 static address all
@@ -610,10 +611,13 @@ or `remove`. This is the same kind of drift the WiFi item's follow-up flagged an
 - **Go test coverage is partial** — `auth_test.go`, `cloudflare_test.go`, and `generate_test.go`
   now cover Access JWT verification, Cloudflare API provisioning, and flake generation. Still
   untested: `appNameFromURL` (git URL parsing, in `add.go`) has the most edge cases of what's left.
-  Also: `TestHandleSetupPersistsWifi` (`serve_test.go`) runs a *real* `nixos-rebuild switch`
-  (via `rebuildAsync` → `apply` → `runRebuild`) on whatever machine runs `go test` — it builds a
-  config under a temp dir and only fails to activate for lack of root. That's also the cause of
-  the `t.TempDir()` cleanup race noted under the AP-portal item. The rebuild step should be
-  injectable (a stub runner in tests) so tests never shell out to `nixos-rebuild`.
+  ~~`TestHandleSetupPersistsWifi` ran a *real* `nixos-rebuild switch`~~ **Fixed (2026-10-18):**
+  `server` has an `applyFn` hook (nil → the real `apply`), and server tests build their server
+  through `newTestServer`, which injects a recorder, so no test shells out to `nixos-rebuild`
+  any more (this also removes the `t.TempDir()` cleanup race noted under the AP-portal item).
+  The same seam now backs tests for the rebuild paths: setup saves and applies the right flake,
+  "Rebuild now" passes `upgradeAll`, a failed rebuild is surfaced and later cleared, and an
+  overlapping rebuild is ignored. Any future test that builds a `server` by hand must set
+  `applyFn` — an unset one still runs the real thing.
 - **No CI** — no `.github/workflows/`; `go test`/`go vet` and the Nix integration check are
   documented but nothing runs them automatically on push/PR.
