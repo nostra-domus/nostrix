@@ -1,0 +1,49 @@
+[
+  {
+    "id": "jellyfin",
+    "name": "Jellyfin",
+    "description": "Stream your own movies, shows and music to any device.",
+    "expose": ["none", "lan", "cloudflare"],
+    "fields": [
+      {
+        "id": "mediaDir",
+        "label": "Media folder",
+        "type": "text",
+        "default": "/srv/media",
+        "pattern": "^/[A-Za-z0-9_./-]+$",
+        "help": "Where your media lives on the device. It is created if missing; add this folder as a library in Jellyfin."
+      }
+    ]
+  },
+  {
+    "id": "vaultwarden",
+    "name": "Vaultwarden",
+    "description": "A password manager that works with the Bitwarden apps and browser extensions.",
+    "expose": ["none", "cloudflare"],
+    "note": "Bitwarden needs a secure (HTTPS) address, so it can only be published through Cloudflare, not on the local network.",
+    "fields": [
+      {
+        "id": "domain",
+        "label": "Public address",
+        "type": "text",
+        "default": "",
+        "pattern": "^[a-z0-9.-]*$",
+        "help": "Optional. The address you reach it at, without https://, for example myserver-vaultwarden.example.com."
+      },
+      {
+        "id": "signupsAllowed",
+        "label": "Allow new accounts",
+        "type": "bool",
+        "default": "true",
+        "help": "Leave on until your own account exists, then turn it off."
+      }
+    ]
+  },
+  {
+    "id": "uptime-kuma",
+    "name": "Uptime Kuma",
+    "description": "Watch your websites and services and get told when one goes down.",
+    "expose": ["none", "lan", "cloudflare"],
+    "fields": []
+  }
+]

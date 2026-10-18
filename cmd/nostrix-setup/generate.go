@@ -37,6 +37,12 @@ func generate(s state) (string, error) {
 		}
 	}
 
+	for _, id := range sortedCatalogIDs(s.Catalog) {
+		if err := validateCatalogApp(id, s.Catalog[id]); err != nil {
+			return "", err
+		}
+	}
+
 	var b strings.Builder
 	w := b.WriteString
 	f := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
@@ -89,6 +95,10 @@ func generate(s state) (string, error) {
 		// modules/apps.nix). `default` is whatever the app's author means by
 		// it, and is not adapted for this device.
 		f("        inputs.%s.nixosModules.%s\n", a.Name, a.moduleName())
+	}
+
+	for _, id := range sortedCatalogIDs(s.Catalog) {
+		w(catalogNix(id, s.Catalog[id]))
 	}
 
 	if s.NginxEnable {

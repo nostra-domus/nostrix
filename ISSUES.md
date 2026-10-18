@@ -497,13 +497,23 @@ running system, no firewall port for a `cloudflare` app, and `expose --dry-run`'
   Cloudflare's edge and reachable on `127.0.0.1` only, so anything running on the device can bypass
   Access. Probably fine for a single-user device; worth stating if that changes.
 - **One policy shape**: every published app allows only the owner email. No per-app allow lists.
-- **No curated adapters yet.** The plan had a few ready-made `nixosModules.nostrix`-style modules
-  for common nixpkgs services; deliberately skipped for now. Until then those are enabled in
-  `local.nix` together with a `nostrix.apps.<name>` entry.
+- **Curated catalog covers three apps** (Jellyfin, Vaultwarden, Uptime Kuma); see "Curated app catalog" below. Other nixpkgs services are still enabled in `local.nix` with a `nostrix.apps.<name>` entry.
 - **Publishing is a separate step** after the switch (it's an API call, not Nix), so there's a
   window where an app declared `cloudflare` has no address yet. The Apps page shows the intended
   address but not whether it is live.
 - `add` needs network (or `--no-check`) for the pre-check.
+
+### Curated app catalog
+
+Built: `modules/catalog/*.nix` (`nostrix.catalog.<id>` wrapping a nixpkgs service in the apps contract), `cmd/nostrix-setup/catalog.json` (the web forms), `catalog.go`, the Apps page cards and `catalog` in the state file. Verified: Go tests, the `catalogContract` flake check (fails on JSON/Nix drift — tried by renaming a field), and a full system evaluation with all three apps enabled.
+
+Not verified / open:
+- **Never booted.** Nobody has installed these apps through the UI in the VM or on hardware.
+- **Jellyfin `mediaDir`** is only created and made group-writable; whether Jellyfin's sandbox can read arbitrary folders is untested.
+- **Vaultwarden `domain`** is typed in by hand; it could be filled in from the published hostname.
+- **No secrets** (admin passwords) in the catalog by design.
+- The Apps page only edits the state file; a hand-edited `local.nix` that sets the same options will win or conflict silently.
+- Catalog apps can't be removed with the CLI; `list`/`remove` cover flake apps only.
 
 ---
 

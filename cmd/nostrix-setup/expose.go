@@ -238,7 +238,7 @@ func (srv *server) newCFClient(token string) *cloudflareClient {
 // appsPage is the data for the Apps page: the registered apps plus what the
 // running system declares about each app's exposure.
 func (srv *server) appsPage(s state) pageData {
-	d := pageData{State: s}
+	d := pageData{State: s, Catalog: catalogViews(s)}
 	apps, err := readDeclaredApps(srv.appsPath())
 	if err != nil {
 		d.Problem = err.Error()

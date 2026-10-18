@@ -58,6 +58,7 @@ type pageData struct {
 
 	// Apps page only.
 	Declared []declaredView // what the running system declares (apps.json)
+	Catalog  []catalogView  // curated apps, installed or not
 	Notice   string         // result of the last publish
 	Problem  string         // why the last publish failed
 }
@@ -124,6 +125,8 @@ func runServe(args []string) {
 	mux.HandleFunc("/setup", srv.handleSetup)
 	mux.HandleFunc("/apps", srv.handleApps)
 	mux.HandleFunc("/apps/remove", srv.handleAppRemove)
+	mux.HandleFunc("/apps/catalog", srv.handleCatalog)
+	mux.HandleFunc("/apps/catalog/remove", srv.handleCatalogRemove)
 	mux.HandleFunc("/apps/expose", srv.handleAppsExpose)
 	mux.HandleFunc("/rebuild", srv.handleRebuild)
 

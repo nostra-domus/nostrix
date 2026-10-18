@@ -179,6 +179,8 @@ automatically.
 
 ### Adding apps
 
+**The easy way: the app catalog.** The web UI's Apps page lists curated apps (Jellyfin, Vaultwarden, Uptime Kuma). Pick one, choose who can reach it — only the device, your local network, or the internet behind your Cloudflare login — fill in its few settings and press Install. Behind the scenes this sets `nostrix.catalog.<app>` in the generated flake; the sections below are for apps that aren't in the catalog.
+
 An app runs under Nostrix through a small contract of ordinary NixOS options, so
 nothing in the app has to know about firewalls or Cloudflare:
 

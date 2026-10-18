@@ -11,11 +11,51 @@
   td, th { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #ddd; }
   form.add { margin-top: 1.5rem; display: flex; gap: 0.5rem; }
   form.add input { flex: 1; padding: 0.4rem; font: inherit; }
+  .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.5rem 1rem 1rem; margin-top: 1rem; }
+  .card h2 { margin-bottom: 0.25rem; }
+  .card label { display: block; margin: 0.6rem 0; }
+  .card label small { display: block; color: #666; }
+  .card input[type=text], .card select { display: block; width: 100%; padding: 0.4rem; font: inherit; }
 </style>
 </head>
 <body>
 <nav><a href="/">Status</a> <a href="/setup">Setup</a> <a href="/apps">Apps</a></nav>
 <h1>Apps</h1>
+{{if .Notice}}<p style="background:#e6f4ea;padding:0.5rem">{{.Notice}}</p>{{end}}
+{{if .Problem}}<p style="background:#fdecea;padding:0.5rem">{{.Problem}}</p>{{end}}
+
+{{range .Catalog}}
+<section class="card">
+  <h2>{{.Name}}{{if .Installed}} <small>— installed</small>{{end}}</h2>
+  <p>{{.Description}}</p>
+  {{if .Note}}<p><small>{{.Note}}</small></p>{{end}}
+  <form method="post" action="/apps/catalog">
+    <input type="hidden" name="id" value="{{.ID}}">
+    <label>Who can reach it
+      <select name="expose">
+        {{range .Choices}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}{{if .Disabled}} disabled{{end}}>{{.Label}}{{if .Disabled}} (set up Cloudflare first){{end}}</option>{{end}}
+      </select>
+    </label>
+    {{range .Form}}
+    <label>{{.Label}}
+      {{if eq .Type "bool"}}<input type="checkbox" name="f_{{.ID}}" value="1"{{if .Checked}} checked{{end}}>
+      {{else}}<input type="text" name="f_{{.ID}}" value="{{.Value}}">{{end}}
+      {{if .Help}}<small>{{.Help}}</small>{{end}}
+    </label>
+    {{end}}
+    <button type="submit">{{if .Installed}}Save{{else}}Install{{end}}</button>
+  </form>
+  {{if .Installed}}
+  <form method="post" action="/apps/catalog/remove" style="margin-top:0.5rem">
+    <input type="hidden" name="id" value="{{.ID}}">
+    <button type="submit">Remove</button> <small>Its data stays on the device.</small>
+  </form>
+  {{end}}
+</section>
+{{end}}
+
+<details>
+<summary>Advanced: add an app from a flake</summary>
 <table>
 <tr><th>Name</th><th>URL</th><th>Module</th><th></th></tr>
 {{range .State.Apps}}
@@ -41,6 +81,8 @@
   <button type="submit">Add</button>
 </form>
 
+</details>
+
 <h2>Declared by the running system</h2>
 <p><small>What each app's module says about itself (<code>nostrix.apps</code>). Change it in the app's module or in <code>/etc/nixos/local.nix</code>.</small></p>
 <table>
@@ -52,8 +94,6 @@
 {{end}}
 </table>
 
-{{if .Notice}}<p style="background:#e6f4ea;padding:0.5rem">{{.Notice}}</p>{{end}}
-{{if .Problem}}<p style="background:#fdecea;padding:0.5rem">{{.Problem}}</p>{{end}}
 
 {{if .State.CloudflareTunnelToken}}
 <h2>Publish through Cloudflare</h2>

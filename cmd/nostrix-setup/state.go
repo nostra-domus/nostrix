@@ -13,6 +13,10 @@ type state struct {
 	NginxEnable bool   `json:"nginxEnable"`
 	Apps        []app  `json:"apps,omitempty"`
 
+	// Catalog holds the curated apps the user switched on, by catalog id
+	// (catalog.go).
+	Catalog map[string]catalogApp `json:"catalog,omitempty"`
+
 	// WiFi client credentials for networking.wireless. Ethernet is required
 	// for the initial nostrix-setup run itself; these just let the device
 	// join a WiFi network afterward. Plaintext in the generated flake and

@@ -6,6 +6,7 @@
   imports = [
     ./base.nix
     ./apps.nix
+    ./catalog
     ./mdns.nix
     ./web.nix
     ./multi-homed-routing.nix

@@ -223,6 +223,38 @@
         assert nixpkgs.lib.hasInfix "needs a port" (builtins.head failing).message;
         pkgs.runCommand "nostrix-apps-contract" { } "touch $out";
 
+      # Catalog contract: the web UI's forms come from
+      # cmd/nostrix-setup/catalog.json, the options from modules/catalog/. For
+      # every catalog app, each field and exposure choice must exist as an
+      # option, and enabling it with defaults must evaluate, publish the right
+      # nostrix.apps entry, and open the firewall only for `lan`.
+      # Run with: nix build .#checks.x86_64-linux.catalogContract
+      catalogContractTest =
+        let
+          lib  = nixpkgs.lib;
+          pkgs = nixpkgs.legacyPackages.x86_64-linux;
+          catalog = builtins.fromJSON (builtins.readFile ./cmd/nostrix-setup/catalog.json);
+          eval = modules: (lib.nixosSystem {
+            system  = "x86_64-linux";
+            modules = [ ./modules/apps.nix ./modules/catalog ] ++ modules;
+          });
+          problems = lib.concatMap (e:
+            let
+              opts   = (eval [ ]).options.nostrix.catalog.${e.id} or null;
+              enable = x: { nostrix.catalog.${e.id} = { enable = true; expose = x; }; };
+              ok     = x: let c = (eval [ (enable x) ]).config; in
+                         c.nostrix.apps.${e.id}.expose == x
+                         && (builtins.elem c.nostrix.apps.${e.id}.port c.networking.firewall.allowedTCPPorts) == (x == "lan");
+            in
+            if opts == null then [ "${e.id}: no nostrix.catalog.${e.id} options" ]
+            else
+              (map (f: "${e.id}: no option ${f.id}") (lib.filter (f: !(opts ? ${f.id})) e.fields))
+              ++ (map (x: "${e.id}: exposure ${x} doesn't evaluate correctly") (lib.filter (x: !ok x) e.expose))
+          ) catalog;
+        in
+        assert lib.assertMsg (problems == [ ]) (lib.concatStringsSep "; " problems);
+        pkgs.runCommand "nostrix-catalog-contract" { } "touch $out";
+
       # Integration test: boots the base nostrix stack and verifies
       # nginx serves content, SSH is hardened, and the hostname is correct.
       # Run with: nix build .#checks.x86_64-linux.integration
@@ -411,5 +443,6 @@
       checks.x86_64-linux.integration = integrationTest;
       checks.x86_64-linux.apPortal    = apPortalTest;
       checks.x86_64-linux.appsContract = appsContractTest;
+      checks.x86_64-linux.catalogContract = catalogContractTest;
     };
 }
